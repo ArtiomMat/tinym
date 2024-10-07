@@ -7,6 +7,7 @@
 int init_mem(mem_t* m, unsigned size) {
   m->size = size;
   m->bytes = balloc(size, BALLOC_R);
+  m->rom_table = NULL;
 
   return m->bytes != NULL;
 }
