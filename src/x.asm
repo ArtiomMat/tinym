@@ -1,0 +1,3 @@
+mov al, 0xDE
+mov bl, 0xBE
+add ax, bx
