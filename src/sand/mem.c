@@ -14,12 +14,16 @@ int init_mem(mem_t* m, unsigned size) {
 int mark_mem_rom(mem_t* m, unsigned from, unsigned to) {
   if (m->rom_table == NULL) {
     /* 14 for the 16KB and 3 for 8 bits per uint8_t, +1 for any rounding error */
-    m = malloc(m->size >> (14 + 3) + 1);
+    m->rom_table = malloc(m->size >> (14 + 3) + 1);
+    
+    if (m->rom_table == NULL) {
+      return 0;
+    }
   }
 
   memset(m->rom_table + from, 1, to);
 
-  return m != NULL;
+  return 1;
 }
 
 int is_mem_rom(mem_t* m, unsigned i) {

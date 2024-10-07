@@ -26,6 +26,7 @@ int init_mem8086(mem_t* m, unsigned extra_size);
 /*
   FROM and TO must are 16KB memory segments, not single byte segments.
   If this is the first time marking then the rom table is automatically allocated.
+  Return value can be 0 if the M->rom_table failed to allocate.
 */
 int mark_mem_rom(mem_t* m, unsigned from, unsigned to);
 /*
