@@ -2,21 +2,47 @@
 #include "os.h"
 #include "test.h"
 
+#include <assert.h>
 #include <string.h>
 #include <stdio.h>
 
-int main(int args_n, const char** args) {
+int args_n;
+const char** args;
+
+/*
+  Find A in argv.
+  Returns 0 if not found(the first argument is useless), otherwise index.
+*/
+unsigned find_arg(const char* a) {
+  int i;
+  for (i = 1; i < args_n; ++i) {
+    if (!strcmp(args[i], a)) {
+      return i;
+    }
+  }
+  return 0;
+}
+
+int main(int _args_n, const char** _args) {
+  unsigned i;
   mem_t mem;
   cpu8086_t cpu;
 
-  /* TESTS */
-  if (args_n > 1 && !strcmp(args[1], "--test")) {
+  args_n = _args_n;
+  args = _args;
+
+  if (find_arg("--test")) {
     init_tests();
 
     add_mem_tests();
+    add_cpu8086_tests();
 
     run_tests();
     free_tests();
+  }
+
+  if (i = find_arg("--boot-sector")) {
+    
   }
 
   init_os();

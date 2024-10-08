@@ -36,6 +36,14 @@ enum {
   REG8086_IP = REG8086_PRIVATE
 };
 
+/* Error codes */
+enum {
+  E8086_OK, /* No error. */
+  E8086_UNDEFINED, /* Misc error for undefined operation/behavior. */
+  E8086_ACCESS_VIOLATION, /* The CPU would've accessed outside 1MB. */
+  E8086_BAD_OPCODE /* A bad opcode. */
+};
+
 typedef struct {
   mem_t* mem; /* Pointer to the used mem */
   reg8086_t regs[16];
@@ -51,7 +59,13 @@ int reset_cpu8086(cpu8086_t* cpu, mem_t* mem);
 void interrupt_cpu8086(cpu8086_t* cpu, uint16_t sig);
 /*
   The function is not necessarily 1 cycle, it simply running the current instruction.
+  Return value of E8086_OK(0) means all went well, otherwise some E8086_* code, some errors are
+  ignored, due to internal safety mechanisms that just sort of quick-fix them, and so no error
+  will be returned, but it would still be an undefined operation that the program should've made
+  sure wouldn't happen, so it would be its fault if this leads to unexpected results.
 */
 int cycle_cpu8086(cpu8086_t* cpu);
+
+void add_cpu8086_tests(void);
 
 #endif

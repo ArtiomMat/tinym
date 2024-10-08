@@ -43,14 +43,20 @@ void run_tests(void) {
 }
 
 void hope_that(int cond, const char* msg) {
-  if (!cond) {
-    printf(
-      "FAILED\n"
-      "  msg: '%s'\n"
-      "\nfailed test %hu/%hu.\n",
-      msg,
-      test_i + 1, tests_n
-    );
-    exit(1);
+  _hope_that(cond, NULL, 0, msg);
+}
+
+void _hope_that(int cond, const char* file, int line, const char* msg) {
+  if (cond) {
+    return;
   }
+
+  puts("FAILED");
+
+  if (file != NULL) { /* Comes from HOPE_THAT() macro and not hope_that() */
+    printf("%s:%d: ", file, line);
+  }
+
+  printf("hoped that '%s'\n\nfailed test %hu/%hu.\n", msg, test_i + 1, tests_n);
+  exit(1);
 }

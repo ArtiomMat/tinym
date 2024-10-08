@@ -66,55 +66,61 @@ void free_mem(mem_t* m) {
   clear_rom_segs(m);
 }
 
+/*
+=============================================================================================
+                                        TESTS
+=============================================================================================
+*/
+
 /* Tests all the ROM functionality. */
 static void test_rom(void) {
   mem_t mem;
   init_mem(&mem, MB1 + 3);
 
-  hope_that(
+  HOPE_THAT(
     mem.rom_table == NULL,
-    "mem.rom_table wasn't NULL."
+    "mem.rom_table is NULL in start."
   );
 
-  hope_that(
-    !is_seg_rom(&mem, 0x10003 >> 16),
-    "memory already initialized as ROM."
+  HOPE_THAT(
+    is_seg_rom(&mem, 0x10003 >> 16),
+    "memory doesn't have ROM."
   );
 
   mark_rom_segs(&mem, 0x1, 0x2);
 
-  hope_that(
+  HOPE_THAT(
     mem.rom_table != NULL,
-    "mem.rom_table didn't account for NULL."
+    "mem.rom_table allocated table."
   );
-  hope_that(
+  HOPE_THAT(
     is_seg_rom(&mem, 0x10003 / KB(64)),
-    "0x10003 should be ROM."
+    "0x10003 is ROM."
   );
 
   mark_rom_segs(&mem, 0x5, 0x8);
   mark_rom_segs(&mem, 0x10, 0x10);
 
-  hope_that(
+  HOPE_THAT(
     !is_seg_rom(&mem, 0x9533 / KB(64)),
-    "0x9533 shouldn't be ROM."
+    "0x9533 isn't ROM."
   );
-  hope_that(
+  HOPE_THAT(
     is_seg_rom(&mem, 0x100002 / KB(64)),
-    "0x100002 should be ROM."
+    "0x100002 is ROM."
   );
-  hope_that(
+  HOPE_THAT(
     is_seg_rom(&mem, 0x60302 / KB(64)),
-    "0x60302 should be ROM."
+    "0x60302 is ROM."
   );
-  hope_that(
+  HOPE_THAT(
     !is_seg_rom(&mem, 0x40302 / KB(64)),
-    "0x40302 shouldn't be ROM."
+    "0x40302 isn't ROM."
   );
 
   free_mem(&mem);
 }
 
 void add_mem_tests(void) {
-  add_test(test_rom, "test_rom");
+  ADD_TEST(test_rom);
 }

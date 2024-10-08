@@ -3,6 +3,7 @@
 #ifndef OS_H
 #define OS_H
 
+#include <stdio.h>
 #include <stddef.h>
 
 enum {
@@ -16,6 +17,8 @@ extern unsigned os_page_size;
 
 int init_os(void);
 void free_os(void);
+
+FILE* fopen_rel(const char *__restrict fp, const char *__restrict m);
 
 /*
   Allocate a big chunk of memory with N bytes, FL determines various flags from BALLOC_*.

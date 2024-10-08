@@ -4,10 +4,10 @@
 #define OPS_H
 
 enum {
-  MOD_NLH, /* No low/high order disp */
-  MOD_L16, /* Low order disp, sign extended to 16-bits */
-  MOD_LH, /* Both low/high order disp */
-  MOD_RM_IS_REG /* R/M is a REG field  */
+  MOD_NO_DISP, /* No low/high order displacement added. */
+  MOD_DISP8, /* 8 bit displacement added, so 1 byte follow ModRM byte.. */
+  MOD_DISP16, /* 16 bit displacement added, so 2 bytes follow ModRM byte. */
+  MOD_RM_IS_REG /* R/M is a REG field. */
 };
 
 /* REG part when Word bit is 1 */
@@ -48,16 +48,20 @@ enum {
   SEG_FS, SEG_GS
 };
 
-/* The various combinations for R/M */
+/*
+  The various combinations for R/M.
+  The possible MOD values can be viewed in MOD_*, where it's described what happens when RM is
+  expanded.
+*/
 enum {
-  RM_BX_SI_D,
-  RM_BX_DI_D,
-  RM_BP_SI_D,
-  RM_BP_DI_D,
-  RM_SI_D,
-  RM_DI_D,
-  RM_BP_D,
-  RM_BX_D
+  RM_BX_SI,
+  RM_BX_DI,
+  RM_BP_SI,
+  RM_BP_DI,
+  RM_SI,
+  RM_DI,
+  RM_BP, /* This one is special, for MOD=0 it's "direct address", otherwise BP + MOD's displacement config */
+  RM_BX
 };
 
 #endif
