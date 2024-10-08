@@ -1,3 +1,4 @@
-mov al, 0xDE
-mov bl, 0xBE
-add ax, bx
+mov ax, 0x4269
+push ax
+pop bx
+inc bx

@@ -7,10 +7,19 @@
 
 int init_mem(mem_t* m, unsigned size) {
   m->size = size;
-  m->bytes = balloc(size, BALLOC_R);
+  m->bytes = balloc(size, BALLOC_R | BALLOC_W);
   m->rom_table = NULL;
 
   return m->bytes != NULL;
+}
+
+int init_mem8086(mem_t* m, unsigned extra_size) {
+  if (!init_mem(m, MB1 + extra_size)) {
+    return 0;
+  }
+  /* BIOS code for hardware, address 0xC0000 to 0xF0000 */
+  mark_rom_segs(m, 0xC, 0xF);
+  return 1;
 }
 
 int mark_rom_segs(mem_t* m, unsigned from, unsigned to) {
@@ -37,15 +46,6 @@ int mark_rom_segs(mem_t* m, unsigned from, unsigned to) {
     m->rom_table[byte] |= (1 << byte_bit);
   }
 
-  return 1;
-}
-
-int init_mem8086(mem_t* m, unsigned extra_size) {
-  if (!init_mem(m, MB1 + extra_size)) {
-    return 0;
-  }
-  /* BIOS code for hardware, address 0xC0000 to 0xF0000 */
-  mark_rom_segs(m, 0xC, 0xF);
   return 1;
 }
 

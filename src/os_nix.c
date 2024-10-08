@@ -25,9 +25,11 @@ void* balloc(unsigned n, int fl) {
   
   if (fl & BALLOC_R) {
     prot |= PROT_READ;
-  } else if (fl & BALLOC_W) {
+  }
+  if (fl & BALLOC_W) {
     prot |= PROT_WRITE;
-  } else if (fl & BALLOC_X) {
+  }
+  if (fl & BALLOC_X) {
     prot |= PROT_EXEC;
   }
 

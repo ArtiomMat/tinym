@@ -41,7 +41,8 @@ enum {
   E8086_OK, /* No error. */
   E8086_UNDEFINED, /* Misc error for undefined operation/behavior. */
   E8086_ACCESS_VIOLATION, /* The CPU would've accessed outside 1MB. */
-  E8086_BAD_OPCODE /* A bad opcode. */
+  E8086_BAD_OPCODE, /* A bad opcode. */
+  E8086_CUT_OFF /* The instruction was cut off. */
 };
 
 typedef struct {
@@ -55,7 +56,7 @@ typedef struct {
   Returns 0 if MEM is invalid.
   You should use init_mem8086() for MEM, manual also ok but must adhere to standard 8086 mapping.
 */
-int reset_cpu8086(cpu8086_t* cpu, mem_t* mem);
+int reset_cpu8086(cpu8086_t* __restrict cpu, mem_t* __restrict mem);
 void interrupt_cpu8086(cpu8086_t* cpu, uint16_t sig);
 /*
   The function is not necessarily 1 cycle, it simply running the current instruction.
@@ -63,6 +64,7 @@ void interrupt_cpu8086(cpu8086_t* cpu, uint16_t sig);
   ignored, due to internal safety mechanisms that just sort of quick-fix them, and so no error
   will be returned, but it would still be an undefined operation that the program should've made
   sure wouldn't happen, so it would be its fault if this leads to unexpected results.
+  NOTE: An error should be irrecoverable.
 */
 int cycle_cpu8086(cpu8086_t* cpu);
 
