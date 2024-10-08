@@ -40,12 +40,12 @@ static uint32_t regseg(reg8086_t reg, reg8086_t seg) {
 }
 /*
   Adds ADDR to the REG+SEG in a way that prevents overflow.
-  E.G if ADDR=1, REG=0xFFFF then we need to do *SEG++ and REG=0
+  E.G if ADDR=1, REG=0xFFFF then we need to do *SEG+=0x10000 and REG=0
 */
 static void regseg_add(reg8086_t* reg, reg8086_t* seg, uint16_t addr) {
   if ((uint32_t)reg->x + addr > 0xFFFF) {
-    reg->x = addr - 1;
-    ++seg->x;
+    reg->x = (0x0000 + addr) - 1;
+    seg->x += 0x1000;
   }
   else {
     reg->x += addr;
@@ -53,12 +53,12 @@ static void regseg_add(reg8086_t* reg, reg8086_t* seg, uint16_t addr) {
 }
 /*
   Subtract ADDR to the REG+SEG in a way that prevents undeflow.
-  E.G if ADDR=1, *REG=0x0 then we need to do *SEG-- and *REG=0xFFFF
+  E.G if ADDR=1, *REG=0x0 then we need to do *SEG-=0x10000 and *REG=0xFFFF
 */
 static void regseg_sub(reg8086_t* reg, reg8086_t* seg, uint16_t addr) {
   if ((int32_t)reg->x - addr < 0) {
-    reg->x = (0xFFFF - addr) + 1;
-    --seg->x;
+    reg->x = (0xFFFF - addr) + reg->x;
+    seg->x -= 0x1000;
   }
   else {
     reg->x -= addr;
@@ -120,7 +120,49 @@ int cycle_cpu8086(cpu8086_t* cpu) {
 
 /* Tests the regseg functions. */
 static void test_regseg(void) {
+  cpu8086_t cpu;
+  mem_t mem;
   
+  init_mem8086(&mem, 0);
+  reset_cpu8086(&cpu, &mem);
+
+  cpu.regs[REG8086_SP].x = 0xFFFF;
+  cpu.regs[REG8086_SS].x = 0x0010;
+  regseg_add(cpu.regs + REG8086_SP, cpu.regs + REG8086_SS, 1);
+  HOPE_THAT(
+    cpu.regs[REG8086_SP].x == 0x0000 && cpu.regs[REG8086_SS].x == 0x1010,
+    "regseg_add() was correct for edge case."
+  );
+
+  cpu.regs[REG8086_SP].x = 0xFFFF;
+  cpu.regs[REG8086_SS].x = 0x0010;
+  regseg_add(cpu.regs + REG8086_SP, cpu.regs + REG8086_SS, 3);
+  HOPE_THAT(
+    cpu.regs[REG8086_SP].x == 0x0002 && cpu.regs[REG8086_SS].x == 0x1010,
+    "regseg_add() was correct for edge case."
+  );
+
+  cpu.regs[REG8086_SP].x = 0x0030;
+  cpu.regs[REG8086_SS].x = 0x3010;
+  regseg_sub(cpu.regs + REG8086_SP, cpu.regs + REG8086_SS, 0x0032);
+  HOPE_THAT(
+    cpu.regs[REG8086_SP].x == (0xFFFF - 2) && cpu.regs[REG8086_SS].x == 0x2010,
+    "regseg_add() was correct for edge case."
+  );
+
+  cpu.regs[REG8086_SP].x = 0x0030;
+  cpu.regs[REG8086_SS].x = 0x3010;
+  regseg_sub(cpu.regs + REG8086_SP, cpu.regs + REG8086_SS, 0x0030);
+  HOPE_THAT(
+    cpu.regs[REG8086_SP].x == 0 && cpu.regs[REG8086_SS].x == 0x3010,
+    "regseg_add() was correct for edge case."
+  );
+
+  /* Now for a final simple test of regseg() */
+  HOPE_THAT(
+    regseg_imm(0xDEAD, 0xBEEF) == (0xDEAD) + 0xBEEF0,
+    "regseg_add() was correct for edge case."
+  );
 }
 
 void add_cpu8086_tests(void) {

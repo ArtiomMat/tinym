@@ -83,7 +83,7 @@ static void test_rom(void) {
   );
 
   HOPE_THAT(
-    is_seg_rom(&mem, 0x10003 >> 16),
+    !is_seg_rom(&mem, 0x10003 >> 16),
     "memory doesn't have ROM."
   );
 
