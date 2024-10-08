@@ -4,6 +4,9 @@
 
 #include <string.h>
 
+#define REGSEG_SP_SS(CPU) regseg_imm(CPU->regs[REG8086_SP].x, CPU->regs[REG8086_SS].x)
+#define REGSEG_IP_CS(CPU) regseg_imm(CPU->regs[REG8086_IP].x, CPU->regs[REG8086_CS].x)
+
 int reset_cpu8086(cpu8086_t* __restrict cpu, mem_t* __restrict mem) {
   /* Set up register starting points */
   memset(cpu->regs, 0, sizeof (cpu->regs));
@@ -71,7 +74,7 @@ static void regseg_sub(reg8086_t* __restrict reg, reg8086_t* __restrict seg, uin
 int cycle_cpu8086(cpu8086_t* cpu) {
   mem_t* mem = cpu->mem;
 
-  uint32_t ip_cs = regseg(cpu->regs[REG8086_IP], cpu->regs[REG8086_CS]);
+  uint32_t ip_cs = REGSEG_IP_CS(cpu);
 
   uint8_t* bytes = mem->bytes + ip_cs;
   uint8_t opcode = (bytes[0] & 0xFC) >> 2;
@@ -94,7 +97,7 @@ int cycle_cpu8086(cpu8086_t* cpu) {
   /* PUSH R16 */
   else if (bytes[0] >= 0x50 && bytes[0] <= 0x57) {
     /* Get stack pointer with segmentation - 2 */
-    uint32_t stack_ptr = regseg_imm(cpu->regs[REG8086_SP].x, cpu->regs[REG8086_SS].x);
+    uint32_t stack_ptr = REGSEG_SP_SS(cpu);
     stack_ptr -= 2;
 
     /* It wrapped around */
@@ -102,7 +105,7 @@ int cycle_cpu8086(cpu8086_t* cpu) {
       return E8086_ACCESS_VIOLATION;
     }
 
-    regseg_sub(cpu->regs + REG8086_SP, cpu->regs + REG8086_SS, 2);
+    regseg_sub(&cpu->regs[REG8086_SP], &cpu->regs[REG8086_SS], 2);
 
     /* Now copy the register contents */
     memcpy(mem->bytes + stack_ptr, &cpu->regs[REG8086_AX + (bytes[0] - 0x50)], 2);
@@ -111,13 +114,13 @@ int cycle_cpu8086(cpu8086_t* cpu) {
   }
   /* POP R16 */
   else if (bytes[0] >= 0x58 && bytes[0] <= 0x5F) {
-    /* Get stack pointer with segmentation - 2 */
-    uint32_t stack_ptr = regseg_imm(cpu->regs[REG8086_SP].x, cpu->regs[REG8086_SS].x);
+    /* Get stack pointer with segmentation */
+    uint32_t stack_ptr = REGSEG_SP_SS(cpu);
 
     /* Copy the content before modifying stack_ptr */
     memcpy(&cpu->regs[REG8086_AX + (bytes[0] - 0x58)], mem->bytes + stack_ptr, 2);
 
-    regseg_add(cpu->regs + REG8086_SP, cpu->regs + REG8086_SS, 2);
+    regseg_add(&cpu->regs[REG8086_SP], &cpu->regs[REG8086_SS], 2);
 
     ip_add = 1;
   }
@@ -243,8 +246,8 @@ static void test_cycling0(void) {
 
   cycle_cpu8086(&cpu);
   HOPE_THAT(
-    cpu.regs[REG8086_BX].x == 0x4269,
-    "POP BX => BX=0x4269"
+    cpu.regs[REG8086_BX].x == 0x4269 && cpu.regs[REG8086_SP].x == 0xFFF0,
+    "POP BX => BX=0x4269 && SP is back."
   );
   
   cycle_cpu8086(&cpu);
