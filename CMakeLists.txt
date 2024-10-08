@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # The cross platform files
 file(GLOB BOX_SRC "${CMAKE_SOURCE_DIR}/src/box/*.c")
 file(GLOB SAND_SRC "${CMAKE_SOURCE_DIR}/src/sand/*.c")
+file(GLOB SHARED_SRC "${CMAKE_SOURCE_DIR}/src/*.c")
 
 # Add the platform source files and append them
 if(WIN32)
@@ -16,7 +17,9 @@ elseif(UNIX)
 endif()
 
 # Add an executable
-add_executable(${PROJECT_NAME} ${BOX_SRC} ${SAND_SRC})
+add_executable(
+  ${PROJECT_NAME}
+  ${BOX_SRC} ${SAND_SRC} ${SHARED_SRC})
 
 target_compile_options(${PROJECT_NAME} PRIVATE 
   -Wall -Wextra -pedantic -ansi -O3 -flto=auto
@@ -25,4 +28,4 @@ target_compile_options(${PROJECT_NAME} PRIVATE
 target_link_options(${PROJECT_NAME} PRIVATE ${PLATFORM_LINKS})
 # target_link_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/lib)
 target_link_libraries(${PROJECT_NAME} PRIVATE ${LIBRARIES} ${GLOBAL_LIBRARIES})
-# target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)

@@ -14,8 +14,8 @@ enum {
 /* But first init_os() */
 extern unsigned os_page_size;
 
-int init_os();
-void free_os();
+int init_os(void);
+void free_os(void);
 
 /*
   Allocate a big chunk of memory with N bytes, FL determines various flags from BALLOC_*.

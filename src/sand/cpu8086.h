@@ -37,17 +37,21 @@ enum {
 };
 
 typedef struct {
+  mem_t* mem; /* Pointer to the used mem */
   reg8086_t regs[16];
   char enable_ivt; /* Whether or not interrupts are enabled. */
-  unsigned long long cycles; /* How many cycles passed. */
+  uint64_t cycles; /* How many cycles passed. */
 } cpu8086_t;
 
-void reset_cpu8086(cpu8086_t* cpu);
-void interrupt_cpu8086(cpu8086_t* cpu, uint16_t sig);
 /*
-  A tick is just 
+  Returns 0 if MEM is invalid.
   You should use init_mem8086() for MEM, manual also ok but must adhere to standard 8086 mapping.
 */
-int tick_cpu8086(cpu8086_t* cpu, mem_t* mem);
+int reset_cpu8086(cpu8086_t* cpu, mem_t* mem);
+void interrupt_cpu8086(cpu8086_t* cpu, uint16_t sig);
+/*
+  The function is not necessarily 1 cycle, it simply running the current instruction.
+*/
+int cycle_cpu8086(cpu8086_t* cpu);
 
 #endif

@@ -10,6 +10,6 @@ as possible.
 
 # Project structure
 
-- `src` : source/header files
+- `src` : source/header directory, the files found there are shared.
   - `box` : the parent process that initializes everything and keeps track of user-end.
   - `sand` : the actual code for the virtualized environment, that is safely isolated.
