@@ -2,6 +2,11 @@
 Maizuz wants a VM to run viruses on. Time to emulate 8086.
 Written entirely in ANSI C, 0 dependency, -pedantic.
 
+# Virtualization progress
+"roleh" from [here](https://hackaday.io/project/193288-improved-8086-opcode-map) built a really nice map for 8086 instructions, helps a lot! So here's the current progress on the 8086 CPU:
+![](8086.png)
+Green means it's finished(mostly tested), red means that it will be implemented soon.
+
 # Trigger warning
 The VM might be innacurate, simulating things incorrectly while appearing to give the same result,
 due to my ignorance or just me not getting the opportunity to learn an aspect of the CPU.

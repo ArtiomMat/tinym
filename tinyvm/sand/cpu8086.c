@@ -181,44 +181,44 @@ static int check_cond_jmp(cpu8086_t* cpu, uint8_t ins_byte) {
     A pattern is that if (ins_byte&1) is 1 then it's the NOT equivalent.
     I exploit it to less boilerplate code for both the normal and NOT versions.
   */
-  switch (ins_byte) {
-    case 0x70: /* JO */
-    case 0x71: /* JNO */
+  switch (ins_byte & 0xF) {
+    case 0x00: /* JO */
+    case 0x01: /* JNO */
     do_jump = (ins_byte&1) ^ (!!(f & F8086_O));
     break;
 
-    case 0x72: /* JC/JB/JNAE */
-    case 0x73: /* JNC/JNB/JAE */
+    case 0x02: /* JC/JB/JNAE */
+    case 0x03: /* JNC/JNB/JAE */
     do_jump = (ins_byte&1) ^ (!!(f & F8086_CY));
     break;
 
-    case 0x74: /* JE/JZ */
-    case 0x75: /* JNE/JNZ */
+    case 0x04: /* JE/JZ */
+    case 0x05: /* JNE/JNZ */
     do_jump = (ins_byte&1) ^ (!!(f & F8086_Z));
     break;
     
-    case 0x76: /* JBE/JNA */
-    case 0x77: /* JA/JNBE */
+    case 0x06: /* JBE/JNA */
+    case 0x07: /* JA/JNBE */
     do_jump = (ins_byte&1) ^ ((!!(f & F8086_CY)) | (!!(f & F8086_Z))); 
     break;
 
-    case 0x78: /* JS */
-    case 0x79: /* JNS */
+    case 0x08: /* JS */
+    case 0x09: /* JNS */
     do_jump = (ins_byte&1) ^ (!!(f & F8086_S));
     break;
 
-    case 0x7A: /* JP/JPE */
-    case 0x7B: /* JNP/JPO */
+    case 0x0A: /* JP/JPE */
+    case 0x0B: /* JNP/JPO */
     do_jump = (ins_byte&1) ^ (!!(f & F8086_P));
     break;
 
-    case 0x7C: /* JL/JNGE */
-    case 0x7D: /* JGE/JNL */
+    case 0x0C: /* JL/JNGE */
+    case 0x0D: /* JGE/JNL */
     do_jump = (ins_byte&1) ^ (!!(f & F8086_S)) ^ (!!(f & F8086_O));
     break;
 
-    case 0x7E: /* JLE/JNG */
-    case 0x7F: /* JGE/J */
+    case 0x0E: /* JLE/JNG */
+    case 0x0F: /* JGE/J */
     do_jump = (ins_byte&1) ^ (((!!(f & F8086_S)) ^ (!!(f & F8086_O))) | (!!(f & F8086_Z)));
     break;
   }
@@ -227,9 +227,16 @@ static int check_cond_jmp(cpu8086_t* cpu, uint8_t ins_byte) {
 }
 
 /*
+  A specific subset of 
+*/
+static void parse_regrm_45(cpu8086_t* cpu, uint8_t* ins_bytes) {
+
+}
+
+/*
   A specific type of instructions that have the reg field.
 */
-static void parse_regrm(cpu8086_t* cpu) {
+static void parse_regrm(cpu8086_t* cpu, uint8_t* ins_bytes) {
   
 }
 
@@ -250,43 +257,44 @@ int cycle_cpu8086(cpu8086_t* cpu) {
   /* Instructions that simply act on the 16-bit registers in order. */
   /* INC R16 */
   if (ins_bytes[0] >= 0x40 && ins_bytes[0] <= 0x47) {
-    ++ (cpu->regs[REG8086_AX + (ins_bytes[0] - 0x40)].x);
+    ++ (cpu->regs[REG8086_AX + (ins_bytes[0] & 7)].x);
     cpu->cycles += 2;
     ip_add = 1;
   }
   /* DEC R16 */
   else if (ins_bytes[0] >= 0x48 && ins_bytes[0] <= 0x4F) {
-    -- (cpu->regs[REG8086_AX + (ins_bytes[0] - 0x48)].x);
+    -- (cpu->regs[REG8086_AX + (ins_bytes[0] & 7)].x);
     cpu->cycles += 2;
     ip_add = 1;
   }
   /* PUSH R16 */
   else if (ins_bytes[0] >= 0x50 && ins_bytes[0] <= 0x57) {
-    push16(cpu, cpu->regs[REG8086_AX + (ins_bytes[0] - 0x50)].x);
+    push16(cpu, cpu->regs[REG8086_AX + (ins_bytes[0] & 7)].x);
     cpu->cycles += 11;
     ip_add = 1;
   }
   /* POP R16 */
   else if (ins_bytes[0] >= 0x58 && ins_bytes[0] <= 0x5F) {
-    cpu->regs[REG8086_AX + (ins_bytes[0] - 0x58)].x = pop16(cpu);
+    cpu->regs[REG8086_AX + (ins_bytes[0] & 7)].x = pop16(cpu);
     cpu->cycles += 8;
     ip_add = 1;
   }
   /* MOV R16, IMM16 */
   else if (ins_bytes[0] >= 0xB8 && ins_bytes[0] <= 0xBF) {
-    uint16_t v;
-
-    if (ip_cs + 3 >= MB1) {
-      return E8086_CUT_OFF;
-    }
-    
-    /* Construct value. */
-    v = mem->bytes[ip_cs + 1] + (mem->bytes[ip_cs + 2] << 8);
-    
-    cpu->regs[REG8086_AX + (ins_bytes[0] - 0xB8)].x = v;
+    cpu->regs[REG8086_AX + (ins_bytes[0] & 7)].x = get16(cpu, ip_cs + 1);
     
     cpu->cycles += 4;
     ip_add = 3;
+  }
+  /* MOV R8, IMM8 */
+  else if (ins_bytes[0] >= 0xB0 && ins_bytes[0] <= 0xB7) {
+    unsigned p_i = ins_bytes[0] >= 0xB4; /* It's the upper register parts if the second half */
+
+    /* & 3 for % 4 */
+    cpu->regs[REG8086_AX + (ins_bytes[0] & 3)].p[p_i] = get8(cpu, ip_cs + 1);
+    
+    cpu->cycles += 4;
+    ip_add = 2;
   }
   /* Various conditional jumps, relative to current instruction. */
   else if (ins_bytes[0] >= 0x70 && ins_bytes[0] <= 0x7F) {
@@ -376,7 +384,8 @@ static void test_cycling0(void) {
     0xB8, 0x69, 0x42, /* MOV AX, 0x4269 */
     0x50, /* PUSH AX */
     0x5B, /* POP BX */
-    0x43 /* INC BX */
+    0x43, /* INC BX */
+    0xB4, 0x69 /* MOV AL, 0x69 */
   };
 
   HOPE_THAT(
@@ -417,6 +426,12 @@ static void test_cycling0(void) {
   HOPE_THAT(
     cpu.regs[REG8086_BX].x == 0x426A,
     "INC BX => BX=0x426A."
+  );
+  
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_AX].x == 0x6969,
+    "MOV AL, 0x69 => AX=0x6969."
   );
 
   free_mem(&mem);
