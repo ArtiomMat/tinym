@@ -1,3 +1,8 @@
+/*
+  NOTE TO DEV: Every function here must be safe yet performant, isolated anarchy in the CPU is
+  better than anarchy in the VM due to out-of-bounds access.
+*/
+
 #include "cpu8086.h"
 #include "ops.h"
 #include "test.h"
@@ -24,11 +29,11 @@ int reset_cpu8086(cpu8086_t* __restrict cpu, mem_t* __restrict mem) {
 }
 
 /*
-  Joins 2 immidiete values into a segmented 20-bit address.
+  SAFE 1MB ACCESS. Joins 2 immidiete values into a segmented 20-bit address.
   The rest of the 12 bits returned will be 0, to avoid potential buffer overflow.
   May set CPU->e to E8086_ACCESS_VIOLATION if we go out of 1MB bounds.
 */
-static uint32_t regseg_imm(cpu8086_t* cpu, uint16_t reg, uint16_t seg) {
+static uint32_t regseg_imm(cpu8086_t* cpu, const uint16_t reg, const uint16_t seg) {
   uint32_t ret = reg + (seg << 4);
   if (0xFFF00000 & ret) {
     cpu->e = E8086_ACCESS_VIOLATION;
@@ -37,16 +42,17 @@ static uint32_t regseg_imm(cpu8086_t* cpu, uint16_t reg, uint16_t seg) {
   return ret;
 }
 /*
+  SAFE 1MB ACCESS.
   Equivalent of regseg_imm but for actual regs. REG and SEG are the REG8086_* enum.
 */
-static uint32_t regseg(cpu8086_t* cpu, int reg, int seg) {
+static uint32_t regseg(cpu8086_t* cpu, const int reg, const int seg) {
   return regseg_imm(cpu, cpu->regs[reg].x, cpu->regs[seg].x);
 }
 /*
-  Adds ADDR to the REG+SEG in a way that prevents overflow.
+  Allows reg/seg > 1MB, but it's ok. Adds ADDR to the REG+SEG in a way that prevents overflow.
   E.G if ADDR=1, REG=0xFFFF then we need to do *SEG+=0x10000 and REG=0
 */
-static void regseg_add(reg8086_t* __restrict reg, reg8086_t* __restrict seg, uint16_t addr) {
+static void regseg_add(reg8086_t* __restrict reg, reg8086_t* __restrict seg, const uint16_t addr) {
   if ((uint32_t)reg->x + addr > 0xFFFF) {
     reg->x = (0x0000 + addr) - 1;
     seg->x += 0x1000;
@@ -56,10 +62,10 @@ static void regseg_add(reg8086_t* __restrict reg, reg8086_t* __restrict seg, uin
   }
 }
 /*
-  Subtract ADDR to the REG+SEG in a way that prevents undeflow.
+  Allows reg/seg > 1MB, but it's ok. Subtract ADDR to the REG+SEG in a way that prevents undeflow.
   E.G if ADDR=1, *REG=0x0 then we need to do *SEG-=0x10000 and *REG=0xFFFF
 */
-static void regseg_sub(reg8086_t* __restrict reg, reg8086_t* __restrict seg, uint16_t addr) {
+static void regseg_sub(reg8086_t* __restrict reg, reg8086_t* __restrict seg, const uint16_t addr) {
   if ((int32_t)reg->x - addr < 0) {
     reg->x = (0xFFFF - addr) + reg->x;
     seg->x -= 0x1000;
@@ -70,7 +76,38 @@ static void regseg_sub(reg8086_t* __restrict reg, reg8086_t* __restrict seg, uin
 }
 
 /*
-  Pushes X into CPU->mem using CPU's stack registers.
+  SAFE 1MB ACCESS. Get a value from CPU->mem[ADDR]. Preffered over raw access for: safety(will 
+  CPU->e and return invalid but safely constructed value) & easier for unaligned access.
+  As mentioned above, may set CPU->e to E8086_ACCESS_VIOLATION.
+*/
+static uint16_t get16(cpu8086_t* cpu, const uint32_t addr) {
+  uint16_t ret;
+
+  if (addr >= MB1 - 1) {
+    cpu->e = E8086_ACCESS_VIOLATION;
+    return 0;
+  }
+  
+  memcpy(&ret, cpu->mem->bytes + addr, 2);
+  return ret;
+}
+
+/*
+  SAFE 1MB ACCESS. Set CPU->mem[ADDR] = what. Preffered over raw access for: safety(will CPU->e 
+  and will not set) & easier for unaligned access.
+  As mentioned above, may set CPU->e to E8086_ACCESS_VIOLATION.
+*/
+static void put16(cpu8086_t* cpu, const uint32_t addr, const uint16_t what) {
+  if (addr >= MB1 - 1) {
+    cpu->e = E8086_ACCESS_VIOLATION;
+    return;
+  }
+  
+  memcpy(cpu->mem->bytes + addr, &what, 2);
+}
+
+/*
+  SAFE 1MB ACCESS. Pushes X into CPU->mem using CPU's stack registers.
   May set CPU->e to E8086_ACCESS_VIOLATION if the stack wrapped around and wont push. Uses regseg() so may set to its errors.
 */
 static void push16(cpu8086_t* cpu, const uint16_t x) {
@@ -78,31 +115,31 @@ static void push16(cpu8086_t* cpu, const uint16_t x) {
   uint32_t stack_ptr = REGSEG_SP_SS(cpu);
   stack_ptr -= 2;
 
-  /* It wrapped around */
+  /* It wrapped around
   if (stack_ptr >= MB1) {
     cpu->e = E8086_ACCESS_VIOLATION;
     return;
-  }
+  } NOT NECESSARY CUZ PUT16() */
 
   regseg_sub(&cpu->regs[REG8086_SP], &cpu->regs[REG8086_SS], 2);
 
   /* Now copy the register contents */
-  memcpy(cpu->mem->bytes + stack_ptr, &x, 2);
+  put16(cpu, stack_ptr, x);
 }
 
 /*
-  Pops the stack from CPU->mem using CPU's stack regisers, and returns the popped value.
+  SAFE 1MB ACCESS. Pops the stack from CPU->mem using CPU's stack regisers, and returns the popped value.
   IP_BYTES is defined as CPU->mem->bytes + REGSEG_IP_CS(CPU), the reason is that it's already in
   cycle_cpu8086().
   Uses regseg() so may set to its errors.
 */
-static uint16_t pop16(cpu8086_t* cpu, uint8_t* ip_bytes) {
+static uint16_t pop16(cpu8086_t* cpu) {
   uint16_t ret;
   /* Get stack pointer with segmentation */
   uint32_t stack_ptr = REGSEG_SP_SS(cpu);
 
   /* Copy the content before modifying stack_ptr */
-  memcpy(&ret, cpu->mem->bytes + stack_ptr, 2);
+  ret = get16(cpu, stack_ptr);
 
   /* Add 2 back */
   regseg_add(&cpu->regs[REG8086_SP], &cpu->regs[REG8086_SS], 2);
@@ -142,7 +179,7 @@ int cycle_cpu8086(cpu8086_t* cpu) {
   }
   /* POP R16 */
   else if (ip_bytes[0] >= 0x58 && ip_bytes[0] <= 0x5F) {
-    cpu->regs[REG8086_AX + (ip_bytes[0] - 0x58)].x = pop16(cpu, ip_bytes);
+    cpu->regs[REG8086_AX + (ip_bytes[0] - 0x58)].x = pop16(cpu);
     ip_add = 1;
   }
   /* MOV R16, IMM16 */
