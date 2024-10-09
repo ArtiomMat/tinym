@@ -33,7 +33,9 @@ enum {
   REG8086_DS,
 
   REG8086_PRIVATE, /* The index of IP, private registers. */
-  REG8086_IP = REG8086_PRIVATE
+  REG8086_IP = REG8086_PRIVATE,
+  REG8086_F
+
 };
 
 /* Error codes */
@@ -45,11 +47,23 @@ enum {
   E8086_CUT_OFF /* The instruction was cut off. */
 };
 
+enum {
+  F8086_CY = 1 << 0, /* Carry */
+  F8086_P = 1 << 2, /* Parity */
+  F8086_AC = 1 << 4, /* Auxiliary carry */
+  F8086_Z = 1 << 6, /* Zero */
+  F8086_S = 1 << 7, /* Sign */
+  F8086_T = 1 << 8, /* Trap/Debug mode? */
+  F8086_I = 1 << 9, /* Interrupts enabled? */
+  F8086_D = 1 << 10, /* Direction is higher memory to lower? for strings */
+  F8086_O = 1 << 11 /* Overflow? */
+};
+
 typedef struct {
   mem_t* mem; /* Pointer to the used mem */
   reg8086_t regs[16];
-  char enable_ivt; /* Whether or not interrupts are enabled. */
   uint64_t cycles; /* How many cycles passed. */
+  int e; /* Error code */
 } cpu8086_t;
 
 /*
@@ -60,11 +74,10 @@ int reset_cpu8086(cpu8086_t* __restrict cpu, mem_t* __restrict mem);
 void interrupt_cpu8086(cpu8086_t* cpu, uint16_t sig);
 /*
   The function is not necessarily 1 cycle, it simply running the current instruction.
-  Return value of E8086_OK(0) means all went well, otherwise some E8086_* code, some errors are
-  ignored, due to internal safety mechanisms that just sort of quick-fix them, and so no error
-  will be returned, but it would still be an undefined operation that the program should've made
-  sure wouldn't happen, so it would be its fault if this leads to unexpected results.
-  NOTE: An error should be irrecoverable.
+  Returns whether or not an error occured, in which case the vm SHOULD handle it via CPU->e.
+  Errors are irrecoverable, the internal logic tries to always recover from any weird stuff, but
+  in some cases the error is so bad that it causes an incomplete operation, or the intended result
+  will not happen.
 */
 int cycle_cpu8086(cpu8086_t* cpu);
 

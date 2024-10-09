@@ -49,15 +49,6 @@ int main(int _args_n, const char** _args) {
   
   init_mem8086(&mem, 0);
   reset_cpu8086(&cpu, &mem);
-  const uint8_t code[] = {
-    0xb8, 0x45, 0x00, /* MOV AX, 69 */
-    0x50, /* PUSH AX */
-    0x5b, /* POP BX */
-    0x43 /* INC BX */
-  };
-  cpu.regs[REG8086_CS].x = 0; /* Force 0 it since it's 0xFFFF */
-  memcpy(mem.bytes, code, sizeof (code));
-  
   cycle_cpu8086(&cpu);
 
   /* printf("0xC0020 is ROM: %i.\n", ) */

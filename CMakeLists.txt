@@ -4,10 +4,8 @@ project(tinyvm)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# The cross platform files
-file(GLOB BOX_SRC "${CMAKE_SOURCE_DIR}/src/box/*.c")
-file(GLOB SAND_SRC "${CMAKE_SOURCE_DIR}/src/sand/*.c")
-file(GLOB SHARED_SRC "${CMAKE_SOURCE_DIR}/src/*.c")
+# Source directory
+set(SRC_DIR  ${CMAKE_SOURCE_DIR}/tinyvm)
 
 # Add the platform source files and append them
 if(WIN32)
@@ -15,6 +13,11 @@ if(WIN32)
 elseif(UNIX)
   set(LIBRARIES -lm -lX11)
 endif()
+
+# Source files
+file(GLOB BOX_SRC "${SRC_DIR}/box/*.c")
+file(GLOB SAND_SRC "${SRC_DIR}/sand/*.c")
+file(GLOB SHARED_SRC "${SRC_DIR}/*.c")
 
 # Add an executable
 add_executable(
@@ -26,6 +29,5 @@ target_compile_options(${PROJECT_NAME} PRIVATE
   ${PLATFORM_FLAGS})
 
 target_link_options(${PROJECT_NAME} PRIVATE ${PLATFORM_LINKS})
-# target_link_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/lib)
 target_link_libraries(${PROJECT_NAME} PRIVATE ${LIBRARIES} ${GLOBAL_LIBRARIES})
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(${PROJECT_NAME} PRIVATE ${SRC_DIR})
