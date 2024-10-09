@@ -137,35 +137,11 @@ int cycle_cpu8086(cpu8086_t* cpu) {
   }
   /* PUSH R16 */
   else if (ip_bytes[0] >= 0x50 && ip_bytes[0] <= 0x57) {
-    #if 0
-    /* Get stack pointer with segmentation - 2 */
-    uint32_t stack_ptr = REGSEG_SP_SS(cpu);
-    stack_ptr -= 2;
-
-    /* It wrapped around */
-    if (stack_ptr >= MB1) {
-      return E8086_ACCESS_VIOLATION;
-    }
-
-    regseg_sub(&cpu->regs[REG8086_SP], &cpu->regs[REG8086_SS], 2);
-
-    /* Now copy the register contents */
-    memcpy(mem->bytes + stack_ptr, &cpu->regs[REG8086_AX + (ip_bytes[0] - 0x50)], 2);
-    #endif
     push16(cpu, cpu->regs[REG8086_AX + (ip_bytes[0] - 0x50)].x);
     ip_add = 1;
   }
   /* POP R16 */
   else if (ip_bytes[0] >= 0x58 && ip_bytes[0] <= 0x5F) {
-    #if 0
-    /* Get stack pointer with segmentation */
-    uint32_t stack_ptr = REGSEG_SP_SS(cpu);
-
-    /* Copy the content before modifying stack_ptr */
-    memcpy(&cpu->regs[REG8086_AX + (ip_bytes[0] - 0x58)], mem->bytes + stack_ptr, 2);
-
-    regseg_add(&cpu->regs[REG8086_SP], &cpu->regs[REG8086_SS], 2);
-    #endif
     cpu->regs[REG8086_AX + (ip_bytes[0] - 0x58)].x = pop16(cpu, ip_bytes);
     ip_add = 1;
   }
