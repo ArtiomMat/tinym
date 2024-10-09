@@ -18,3 +18,7 @@ as possible.
 - `tinyvm` : source/header directory, the files found there are shared.
   - `box` : the parent process that initializes everything and keeps track of user-end.
   - `sand` : the actual code for the virtualized environment, that is safely isolated.
+
+----
+
+<small>5'nizza...</small>

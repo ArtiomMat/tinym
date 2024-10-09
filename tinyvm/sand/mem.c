@@ -4,6 +4,7 @@
 #include "mem.h"
 #include "test.h"
 #include "os.h"
+#include "util.h"
 
 int init_mem(mem_t* m, unsigned size) {
   m->size = size;
@@ -36,6 +37,7 @@ int mark_rom_segs(mem_t* m, unsigned from, unsigned to) {
     }
   }
 
+  #if 0
   for (bit = from, byte = (from >> 3), byte_bit = (from & 7); bit <= to; ++bit, ++byte_bit) {
     /* Every 8 bits we gotta increment the bit counter */
     if (byte_bit >= 8) {
@@ -45,6 +47,11 @@ int mark_rom_segs(mem_t* m, unsigned from, unsigned to) {
 
     m->rom_table[byte] |= (1 << byte_bit);
   }
+  #endif
+  
+  for (bit = from; bit <= to; ++bit) {
+    set_arr_bit(m->rom_table, bit, 1);
+  }
 
   return 1;
 }
@@ -53,7 +60,8 @@ int is_seg_rom(mem_t* m, unsigned i) {
   if (m->rom_table == NULL) {
     return 0;
   }
-  return m->rom_table[i >> 3] & (1 << (i & 7));
+  /*return m->rom_table[i >> 3] & (1 << (i & 7));*/
+  return get_arr_bit(m->rom_table, i);
 }
 
 void clear_rom_segs(mem_t* m) {

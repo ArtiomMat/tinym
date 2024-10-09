@@ -1,6 +1,7 @@
 #include "sand/cpu8086.h"
 #include "os.h"
 #include "test.h"
+#include "util.h"
 
 #include <assert.h>
 #include <string.h>
@@ -44,6 +45,7 @@ int main(int _args_n, const char** _args) {
   if (i = find_arg("--boot-sector")) {
     
   }
+  print_parity_table();
 
   init_os();
   

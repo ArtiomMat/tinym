@@ -6,6 +6,7 @@
 #include "cpu8086.h"
 #include "ops.h"
 #include "test.h"
+#include "util.h"
 
 #include <string.h>
 
@@ -13,6 +14,23 @@
 #define REGSEG_IP_CS(CPU) regseg_imm(CPU, CPU->regs[REG8086_IP].x, CPU->regs[REG8086_CS].x)
 #define REGSEG_IP_CS_ADD(CPU, N) regseg_add(&CPU->regs[REG8086_IP], &CPU->regs[REG8086_CS], N)
 #define REGSEG_IP_CS_SUB(CPU, N) regseg_sub(&CPU->regs[REG8086_IP], &CPU->regs[REG8086_CS], N)
+
+/* These are used to identify an instruction when there are multiple opcodes. */
+enum {
+  INS_ADD,
+  INS_OR,
+  INS_ADC,
+  INS_SBB,
+  INS_AND,
+  INS_SUB,
+  INS_XOR,
+  INS_CMP
+};
+
+static const uint8_t parity_table[] = {
+  0x69, 0x96, 0x96, 0x69, 0x96, 0x69, 0x69, 0x96, 0x96, 0x69, 0x69, 0x96, 0x69, 0x96, 0x96, 0x69, 
+  0x96, 0x69, 0x69, 0x96, 0x69, 0x96, 0x96, 0x69, 0x69, 0x96, 0x96, 0x69, 0x96, 0x69, 0x69, 0x96
+};
 
 int reset_cpu8086(cpu8086_t* __restrict cpu, mem_t* __restrict mem) {
   /* Set up register starting points */
@@ -151,6 +169,36 @@ static uint16_t pop16(cpu8086_t* cpu) {
 }
 
 /*
+  Determines purely with RESULT(which is 32 bit to allow overflow to be seen).
+  W is a boolean value and determines if it was a 16 bit operation(1) or 8 bit(0).
+*/
+static void update_flags_bit(cpu8086_t* cpu, const uint32_t result, const uint8_t w) {
+  if (!result) {
+    cpu->regs[REG8086_F].x |= F8086_Z;
+    cpu->regs[REG8086_F].x &= ~F8086_S;
+  }
+  else {
+    if (result & 0x80 << (w * 8)) {
+      cpu->regs[REG8086_F].x |= F8086_S;
+    }
+    else {
+      cpu->regs[REG8086_F].x &= ~F8086_S;
+    }
+
+    cpu->regs[REG8086_F].x &= ~F8086_Z;
+  }
+
+  /* if (result & 0xFFFF00000 | (!w ? 0xFF00 : 0x0000)) {
+    cpu->regs[REG8086_F].x |= F8086_CY;
+  }
+  else {
+    cpu->regs[REG8086_F].x &= ~F8086_CY;
+  } */
+
+
+}
+
+/*
   Note that REL_ADDR is signed.
   IP_CS must be REGSEG_IP_CS(CPU).
   May set CPU->e to E8086_ACCESS_VIOLATION in the case where REL_ADDR over/underflows.
@@ -226,31 +274,97 @@ static int check_cond_jmp(cpu8086_t* cpu, uint8_t ins_byte) {
   return do_jump;
 }
 
+
 /*
-  A specific subset of 
+  A specific subset of instructions like ADD, 0x?4, 0x?5, 0x?C, 0x?D.
 */
-static void parse_regrm_45(cpu8086_t* cpu, uint8_t* ins_bytes) {
+static void parse_alax(cpu8086_t* cpu, uint8_t* ins_bytes, int ins) {
 
 }
 
 /*
-  A specific type of instructions that have the reg field.
+  A specific format of instructions that appear in 0x00-0x30, like ADD in the start, or CMP in the end, they are distinct and can be generalized to this function.
+  Returns how much to add to ip_cs.
+  It's also applicable to MOV in 0x88-0x8B, even through it doesn't have the AL-AX thingy.
+  INS is the instruction and is from the enum INS_, INS_BYTES is the pointer to the instruction in CPU->mem.
+  Since these instruction can access memory, CPU->e may be set to E8086_ACCESS_VIOLATION.
 */
-static void parse_regrm(cpu8086_t* cpu, uint8_t* ins_bytes) {
-  
-}
-
-int cycle_cpu8086(cpu8086_t* cpu) {
-  mem_t* mem = cpu->mem;
-
-  uint32_t ip_cs = REGSEG_IP_CS(cpu); /* Address of current instruction */
-
-  uint8_t* ins_bytes = mem->bytes + ip_cs; /* Where the instruction is */
+static unsigned parse_0030(cpu8086_t* cpu, uint8_t* ins_bytes, int ins) {
+  uint32_t ip_cs = REGSEG_IP_CS(cpu);
   uint8_t opcode = (ins_bytes[0] & 0xFC) >> 2;
   uint8_t d_bit = (ins_bytes[0] & 0x2) >> 1;
   uint8_t w_bit = ins_bytes[0] & 0x1;
 
-  uint8_t ip_add = 0; /* How much to add if reading of instruction succeeded */
+  uint32_t ip_add = 1;
+
+  /* If 3rd bit on it's the INS AL/AX, IMM8/IMM16 thingy, works for both 0x04/5 and 0x0C/D */
+  if (opcode & 0x4) {
+    if (w_bit) {
+      uint16_t imm = get16(cpu, ip_cs + 1);
+      switch (ins) {
+        case INS_ADD:
+        cpu->regs[REG8086_AX].x += imm;
+        break;
+
+        case INS_OR:
+        cpu->regs[REG8086_AX].x |= imm;
+        break;
+
+        case INS_ADC:
+        uint32_t carry = !!(cpu->regs[REG8086_F].x & F8086_CY);
+        uint32_t add32 = cpu->regs[REG8086_AX].x + imm + carry;
+        
+        if (add32 & 0x10000) {
+          cpu->regs[REG8086_F].x |= F8086_CY;
+        }
+        else {
+          cpu->regs[REG8086_F].x &= ~F8086_CY;
+        }
+
+        cpu->regs[REG8086_AX].x = (uint16_t)add32;
+        break;
+
+        case INS_SBB:
+        /*TODO*/
+        break;
+
+        case INS_AND:
+        cpu->regs[REG8086_AX].x &= imm;
+        break;
+
+        case INS_SUB:
+        cpu->regs[REG8086_AX].x -= imm;
+        break;
+
+        case INS_XOR:
+        cpu->regs[REG8086_AX].x ^= imm;
+        break;
+
+        case INS_CMP:
+        if (cpu->regs[REG8086_AX].x == imm) {
+          cpu->regs[REG8086_F].x |= F8086_Z;
+        }
+        else {
+          cpu->regs[REG8086_F].x &= ~F8086_Z;
+        }
+
+        cpu->regs[REG8086_AX].x ^= imm;
+        break;
+      }
+      ip_add = 3;
+    }
+    else {
+      ip_add = 2;
+    }
+    return ip_add;
+  }
+}
+
+int cycle_cpu8086(cpu8086_t* cpu) {
+  mem_t* mem = cpu->mem;
+  uint32_t ip_cs = REGSEG_IP_CS(cpu); /* Address of current instruction */
+  uint8_t* ins_bytes = mem->bytes + ip_cs; /* Where the instruction is */
+  uint8_t ip_add = 1; /* How much to add if reading of instruction succeeded */
 
   cpu->e = E8086_OK; /* TODO: But should it reset? An error is fatal anyway. */
 
@@ -437,7 +551,39 @@ static void test_cycling0(void) {
   free_mem(&mem);
 }
 
+void test_parity_table(void) {
+  HOPE_THAT(
+    get_arr_bit(parity_table, 0) == 1,
+    "Correct parity for 0."
+  );
+  HOPE_THAT(
+    get_arr_bit(parity_table, 1) == 0,
+    "Correct parity for 1."
+  );
+  HOPE_THAT(
+    get_arr_bit(parity_table, 2) == 0,
+    "Correct parity for 2."
+  );
+  HOPE_THAT(
+    get_arr_bit(parity_table, 3) == 1,
+    "Correct parity for 3."
+  );
+  HOPE_THAT(
+    get_arr_bit(parity_table, 104) == 0,
+    "Correct parity for 104."
+  );
+  HOPE_THAT(
+    get_arr_bit(parity_table, 96) == 1,
+    "Correct parity for 96."
+  );
+  HOPE_THAT(
+    get_arr_bit(parity_table, 108) == 1,
+    "Correct parity for 108."
+  );
+}
+
 void add_cpu8086_tests(void) {
   ADD_TEST(test_regseg);
   ADD_TEST(test_cycling0);
+  ADD_TEST(test_parity_table);
 }
