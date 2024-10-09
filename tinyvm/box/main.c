@@ -49,7 +49,13 @@ int main(int _args_n, const char** _args) {
   
   init_mem8086(&mem, 0);
   reset_cpu8086(&cpu, &mem);
-  cycle_cpu8086(&cpu);
+
+  while (1) {
+    if (i = cycle_cpu8086(&cpu)) {
+      printf("Error: %u.\n", i);
+      return 1;
+    }
+  }
 
   /* printf("0xC0020 is ROM: %i.\n", ) */
   

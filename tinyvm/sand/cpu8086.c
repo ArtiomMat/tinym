@@ -11,6 +11,8 @@
 
 #define REGSEG_SP_SS(CPU) regseg_imm(CPU, CPU->regs[REG8086_SP].x, CPU->regs[REG8086_SS].x)
 #define REGSEG_IP_CS(CPU) regseg_imm(CPU, CPU->regs[REG8086_IP].x, CPU->regs[REG8086_CS].x)
+#define REGSEG_IP_CS_ADD(CPU, N) regseg_add(&CPU->regs[REG8086_IP], &CPU->regs[REG8086_CS], N)
+#define REGSEG_IP_CS_SUB(CPU, N) regseg_sub(&CPU->regs[REG8086_IP], &CPU->regs[REG8086_CS], N)
 
 int reset_cpu8086(cpu8086_t* __restrict cpu, mem_t* __restrict mem) {
   /* Set up register starting points */
@@ -75,6 +77,16 @@ static void regseg_sub(reg8086_t* __restrict reg, reg8086_t* __restrict seg, con
   }
 }
 
+/* SAFE 1MB ACCESS. 8 bit equivalent of get16. */
+static uint8_t get8(cpu8086_t* cpu, const uint32_t addr) {
+  if (addr >= MB1) {
+    cpu->e = E8086_ACCESS_VIOLATION;
+    return 0;
+  }
+  
+  return cpu->mem->bytes[addr];
+}
+
 /*
   SAFE 1MB ACCESS. Get a value from CPU->mem[ADDR]. Preffered over raw access for: safety(will 
   CPU->e and return invalid but safely constructed value) & easier for unaligned access.
@@ -111,16 +123,9 @@ static void put16(cpu8086_t* cpu, const uint32_t addr, const uint16_t what) {
   May set CPU->e to E8086_ACCESS_VIOLATION if the stack wrapped around and wont push. Uses regseg() so may set to its errors.
 */
 static void push16(cpu8086_t* cpu, const uint16_t x) {
-  /* Get stack pointer with segmentation - 2 */
   uint32_t stack_ptr = REGSEG_SP_SS(cpu);
-  stack_ptr -= 2;
 
-  /* It wrapped around
-  if (stack_ptr >= MB1) {
-    cpu->e = E8086_ACCESS_VIOLATION;
-    return;
-  } NOT NECESSARY CUZ PUT16() */
-
+  stack_ptr -= 2; /* Since gotta first decrement */
   regseg_sub(&cpu->regs[REG8086_SP], &cpu->regs[REG8086_SS], 2);
 
   /* Now copy the register contents */
@@ -129,13 +134,11 @@ static void push16(cpu8086_t* cpu, const uint16_t x) {
 
 /*
   SAFE 1MB ACCESS. Pops the stack from CPU->mem using CPU's stack regisers, and returns the popped value.
-  IP_BYTES is defined as CPU->mem->bytes + REGSEG_IP_CS(CPU), the reason is that it's already in
   cycle_cpu8086().
   Uses regseg() so may set to its errors.
 */
 static uint16_t pop16(cpu8086_t* cpu) {
   uint16_t ret;
-  /* Get stack pointer with segmentation */
   uint32_t stack_ptr = REGSEG_SP_SS(cpu);
 
   /* Copy the content before modifying stack_ptr */
@@ -147,15 +150,98 @@ static uint16_t pop16(cpu8086_t* cpu) {
   return ret;
 }
 
+/*
+  Note that REL_ADDR is signed.
+  IP_CS must be REGSEG_IP_CS(CPU).
+  May set CPU->e to E8086_ACCESS_VIOLATION in the case where REL_ADDR over/underflows.
+*/
+static void short_jump(cpu8086_t* cpu, int8_t rel_addr) {
+  if (rel_addr + REGSEG_IP_CS(cpu) >= MB1) {
+    cpu->e = E8086_ACCESS_VIOLATION;
+    return;
+  }
+
+  if (rel_addr < 0) {
+    REGSEG_IP_CS_ADD(cpu, rel_addr);
+  }
+  else {
+    REGSEG_IP_CS_SUB(cpu, rel_addr);
+  }
+}
+
+/*
+  Returns whether according to the first instruction byte the CPU should do conditional jump.
+  INS_BYTE is the instruction, it must be 0x70-0x7F inclusive.
+*/
+static int check_cond_jmp(cpu8086_t* cpu, uint8_t ins_byte) {
+  int do_jump;
+  uint16_t f = cpu->regs[REG8086_F].x;
+
+  /*
+    A pattern is that if (ins_byte&1) is 1 then it's the NOT equivalent.
+    I exploit it to less boilerplate code for both the normal and NOT versions.
+  */
+  switch (ins_byte) {
+    case 0x70: /* JO */
+    case 0x71: /* JNO */
+    do_jump = (ins_byte&1) ^ (!!(f & F8086_O));
+    break;
+
+    case 0x72: /* JC/JB/JNAE */
+    case 0x73: /* JNC/JNB/JAE */
+    do_jump = (ins_byte&1) ^ (!!(f & F8086_CY));
+    break;
+
+    case 0x74: /* JE/JZ */
+    case 0x75: /* JNE/JNZ */
+    do_jump = (ins_byte&1) ^ (!!(f & F8086_Z));
+    break;
+    
+    case 0x76: /* JBE/JNA */
+    case 0x77: /* JA/JNBE */
+    do_jump = (ins_byte&1) ^ ((!!(f & F8086_CY)) | (!!(f & F8086_Z))); 
+    break;
+
+    case 0x78: /* JS */
+    case 0x79: /* JNS */
+    do_jump = (ins_byte&1) ^ (!!(f & F8086_S));
+    break;
+
+    case 0x7A: /* JP/JPE */
+    case 0x7B: /* JNP/JPO */
+    do_jump = (ins_byte&1) ^ (!!(f & F8086_P));
+    break;
+
+    case 0x7C: /* JL/JNGE */
+    case 0x7D: /* JGE/JNL */
+    do_jump = (ins_byte&1) ^ (!!(f & F8086_S)) ^ (!!(f & F8086_O));
+    break;
+
+    case 0x7E: /* JLE/JNG */
+    case 0x7F: /* JGE/J */
+    do_jump = (ins_byte&1) ^ (((!!(f & F8086_S)) ^ (!!(f & F8086_O))) | (!!(f & F8086_Z)));
+    break;
+  }
+
+  return do_jump;
+}
+
+/*
+  A specific type of instructions that have the reg field.
+*/
+static void parse_regrm(cpu8086_t* cpu) {
+  
+}
+
 int cycle_cpu8086(cpu8086_t* cpu) {
   mem_t* mem = cpu->mem;
 
-  uint32_t ip_cs = REGSEG_IP_CS(cpu);
+  uint32_t ip_cs = REGSEG_IP_CS(cpu); /* Address of current instruction */
 
-  uint8_t* ip_bytes = mem->bytes + ip_cs; /* Where the instruction is */
-  uint8_t opcode = (ip_bytes[0] & 0xFC) >> 2;
-  uint8_t d_bit = (ip_bytes[0] & 0x2) >> 1;
-  uint8_t w_bit = ip_bytes[0] & 0x1;
+  uint8_t* ins_bytes = mem->bytes + ip_cs; /* Where the instruction is */
+  uint8_t opcode = (ins_bytes[0] & 0xFC) >> 2;
+  uint8_t d_bit = (ins_bytes[0] & 0x2) >> 1;
+  uint8_t w_bit = ins_bytes[0] & 0x1;
 
   uint8_t ip_add = 0; /* How much to add if reading of instruction succeeded */
 
@@ -163,27 +249,31 @@ int cycle_cpu8086(cpu8086_t* cpu) {
 
   /* Instructions that simply act on the 16-bit registers in order. */
   /* INC R16 */
-  if (ip_bytes[0] >= 0x40 && ip_bytes[0] <= 0x47) {
-    ++ (cpu->regs[REG8086_AX + (ip_bytes[0] - 0x40)].x);
+  if (ins_bytes[0] >= 0x40 && ins_bytes[0] <= 0x47) {
+    ++ (cpu->regs[REG8086_AX + (ins_bytes[0] - 0x40)].x);
+    cpu->cycles += 2;
     ip_add = 1;
   }
   /* DEC R16 */
-  else if (ip_bytes[0] >= 0x48 && ip_bytes[0] <= 0x4F) {
-    -- (cpu->regs[REG8086_AX + (ip_bytes[0] - 0x48)].x);
+  else if (ins_bytes[0] >= 0x48 && ins_bytes[0] <= 0x4F) {
+    -- (cpu->regs[REG8086_AX + (ins_bytes[0] - 0x48)].x);
+    cpu->cycles += 2;
     ip_add = 1;
   }
   /* PUSH R16 */
-  else if (ip_bytes[0] >= 0x50 && ip_bytes[0] <= 0x57) {
-    push16(cpu, cpu->regs[REG8086_AX + (ip_bytes[0] - 0x50)].x);
+  else if (ins_bytes[0] >= 0x50 && ins_bytes[0] <= 0x57) {
+    push16(cpu, cpu->regs[REG8086_AX + (ins_bytes[0] - 0x50)].x);
+    cpu->cycles += 11;
     ip_add = 1;
   }
   /* POP R16 */
-  else if (ip_bytes[0] >= 0x58 && ip_bytes[0] <= 0x5F) {
-    cpu->regs[REG8086_AX + (ip_bytes[0] - 0x58)].x = pop16(cpu);
+  else if (ins_bytes[0] >= 0x58 && ins_bytes[0] <= 0x5F) {
+    cpu->regs[REG8086_AX + (ins_bytes[0] - 0x58)].x = pop16(cpu);
+    cpu->cycles += 8;
     ip_add = 1;
   }
   /* MOV R16, IMM16 */
-  else if (ip_bytes[0] >= 0xB8 && ip_bytes[0] <= 0xBF) {
+  else if (ins_bytes[0] >= 0xB8 && ins_bytes[0] <= 0xBF) {
     uint16_t v;
 
     if (ip_cs + 3 >= MB1) {
@@ -193,17 +283,25 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     /* Construct value. */
     v = mem->bytes[ip_cs + 1] + (mem->bytes[ip_cs + 2] << 8);
     
-    cpu->regs[REG8086_AX + (ip_bytes[0] - 0xB8)].x = v;
+    cpu->regs[REG8086_AX + (ins_bytes[0] - 0xB8)].x = v;
     
+    cpu->cycles += 4;
     ip_add = 3;
   }
-  else 
-
-  /* Check opcode. */
-  switch (opcode) {
-    case 0x0: /* ADD */
+  /* Various conditional jumps, relative to current instruction. */
+  else if (ins_bytes[0] >= 0x70 && ins_bytes[0] <= 0x7F) {
+    uint8_t rel_addr = get8(cpu, ip_cs);
     
-    break;
+    if (check_cond_jmp(cpu, ins_bytes[0])) {
+      short_jump(cpu, rel_addr);
+      cpu->cycles += 16;
+    }
+    else {
+      cpu->cycles += 4;
+    }
+  }
+  else {
+    cpu->e = E8086_BAD_OPCODE;
   }
 
   regseg_add(&cpu->regs[REG8086_IP], &cpu->regs[REG8086_CS], ip_add);
