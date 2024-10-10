@@ -169,33 +169,102 @@ static uint16_t pop16(cpu8086_t* cpu) {
 }
 
 /*
-  Determines purely with RESULT(which is 32 bit to allow overflow to be seen).
+  Updates CPU's flags accroding to _RESULT, of any operation that updates flags.
+  NOTE: _RESULT is uint32_t to allow for accurate range detection within W's context,
+  make sure that you use+pass int32_t or uint32_t, and not 16/8 ints, because overflow
+  would not be visible, hence nullifying the arithmetic analysis.
   W is a boolean value and determines if it was a 16 bit operation(1) or 8 bit(0).
 */
-static void update_flags_bit(cpu8086_t* cpu, const uint32_t result, const uint8_t w) {
-  if (!result) {
+static void update_flags(cpu8086_t* cpu, const uint32_t _result, const int w) {
+  union {
+    uint32_t u;
+    int32_t i;
+  } result = { .u = _result };
+
+  cpu->regs[REG8086_F].x = F8086_I | F8086_D | F8086_T;
+
+  if (!result.u) {
     cpu->regs[REG8086_F].x |= F8086_Z;
-    cpu->regs[REG8086_F].x &= ~F8086_S;
+  }
+  else if (result.u & 0x80000000) {
+    cpu->regs[REG8086_F].x |= F8086_S;
+  }
+
+  if (get_arr_bit(parity_table, result.u & 0xFF)) {
+    cpu->regs[REG8086_F].x |= F8086_P;
+  }
+
+  if (w) {
+    if (result.i > 32767 || result.i < -32768) {
+      cpu->regs[REG8086_F].x |= F8086_O;
+    }
+    if (result.u > 65535) {
+      cpu->regs[REG8086_F].x |= F8086_CY;
+    }
   }
   else {
-    if (result & 0x80 << (w * 8)) {
-      cpu->regs[REG8086_F].x |= F8086_S;
+    if (result.i > 127 || result.i < -128) {
+      cpu->regs[REG8086_F].x |= F8086_O;
     }
-    else {
-      cpu->regs[REG8086_F].x &= ~F8086_S;
+    if (result.u > 255) {
+      cpu->regs[REG8086_F].x |= F8086_CY;
     }
-
-    cpu->regs[REG8086_F].x &= ~F8086_Z;
   }
+}
 
-  /* if (result & 0xFFFF00000 | (!w ? 0xFF00 : 0x0000)) {
-    cpu->regs[REG8086_F].x |= F8086_CY;
-  }
-  else {
-    cpu->regs[REG8086_F].x &= ~F8086_CY;
-  } */
-
-
+/* Does not add cycles because not enough info. */
+static uint32_t add_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
+  uint32_t result = a + b;
+  update_flags(cpu, result, w);
+  return result;
+}
+/* Does not add cycles because not enough info. */
+static uint32_t adc_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
+  uint32_t carry = !!(cpu->regs[REG8086_F].x & F8086_CY);
+  uint32_t result = a + b + carry;
+  update_flags(cpu, result, w);
+  return result;
+}
+/* Does not add cycles because not enough info. */
+static uint32_t sub_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
+  uint32_t result = a - b;
+  update_flags(cpu, result, w);
+  return result;
+}
+/* Does not add cycles because not enough info. */
+static uint32_t sbb_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
+  uint32_t carry = !!(cpu->regs[REG8086_F].x & F8086_CY);
+  uint32_t result = a - b - carry;
+  update_flags(cpu, result, w);
+  return result;
+}
+/* Does not add cycles because not enough info. */
+static uint32_t and_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
+  uint32_t result = a & b;
+  update_flags(cpu, result, w);
+  return result;
+}
+/* Does not add cycles because not enough info. */
+static uint32_t or_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
+  uint32_t result = a | b;
+  update_flags(cpu, result, w);
+  return result;
+}
+/* Does not add cycles because not enough info. */
+static uint32_t xor_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
+  uint32_t result = a ^ b;
+  update_flags(cpu, result, w);
+  return result;
+}
+/* Only affects flags. Does not add cycles because not enough info. */
+static void cmp_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
+  uint32_t result = a ^ b;
+  update_flags(cpu, result, w);
+}
+/* Only affects flags. Does not add cycles because not enough info. */
+static void test_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
+  uint32_t result = a & b;
+  update_flags(cpu, result, w);
 }
 
 /*

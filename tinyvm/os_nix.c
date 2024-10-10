@@ -5,11 +5,18 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
+#include <stdint.h>
 
 #include "os.h"
 
 int init_os(void) {
+  uint32_t one = 1;
   os_page_size = sysconf(_SC_PAGE_SIZE);
+
+  if (*(char *)&one != 1) {
+    puts("init_os(): Big-endian is not supported.");
+    return 0;
+  }
 
   return 1;
 }

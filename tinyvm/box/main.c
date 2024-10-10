@@ -45,9 +45,11 @@ int main(int _args_n, const char** _args) {
   if (i = find_arg("--boot-sector")) {
     
   }
-  print_parity_table();
 
-  init_os();
+  if (!init_os()) {
+    puts("main(): init_os() failed.");
+    return 1;
+  }
   
   init_mem8086(&mem, 0);
   reset_cpu8086(&cpu, &mem);
