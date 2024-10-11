@@ -40,7 +40,7 @@ int reset_cpu8086(cpu8086_t* __restrict cpu, mem_t* __restrict mem) {
   cpu->regs[REG8086_F].x |= F8086_I;
 
   /* A minimum size for addressable memory. */
-  if (mem->size < MB1) {
+  if (mem == NULL || mem->size < MB1) {
     return 0;
   }
   cpu->mem = mem;
@@ -175,38 +175,39 @@ static uint16_t pop16(cpu8086_t* cpu) {
   would not be visible, hence nullifying the arithmetic analysis.
   W is a boolean value and determines if it was a 16 bit operation(1) or 8 bit(0).
 */
-static void update_flags(cpu8086_t* cpu, const uint32_t _result, const int w) {
-  union {
-    uint32_t u;
-    int32_t i;
-  } result = { .u = _result };
-
+static void update_flags(cpu8086_t* cpu, const uint32_t result, const int w) {
   cpu->regs[REG8086_F].x = F8086_I | F8086_D | F8086_T;
 
-  if (!result.u) {
+  if (!result) {
     cpu->regs[REG8086_F].x |= F8086_Z;
   }
-  else if (result.u & 0x80000000) {
+  else if (
+    (w && ((uint16_t)result) & 0x8000)
+    || (!w && ((uint8_t)result) & 0x80)
+  ) {
     cpu->regs[REG8086_F].x |= F8086_S;
   }
 
-  if (get_arr_bit(parity_table, result.u & 0xFF)) {
+  if (
+    (w && get_arr_bit(parity_table, ((uint16_t)result) & 0xFF))
+    || (!w && get_arr_bit(parity_table, ((uint8_t)result) & 0xFF))
+  ) {
     cpu->regs[REG8086_F].x |= F8086_P;
   }
 
   if (w) {
-    if (result.i > 32767 || result.i < -32768) {
+    if (((int32_t)result) > 32767 || ((int32_t)result) < -32768) {
       cpu->regs[REG8086_F].x |= F8086_O;
     }
-    if (result.u > 65535) {
+    if (result > 65535) {
       cpu->regs[REG8086_F].x |= F8086_CY;
     }
   }
   else {
-    if (result.i > 127 || result.i < -128) {
+    if (((int32_t)result) > 127 || ((int32_t)result) < -128) {
       cpu->regs[REG8086_F].x |= F8086_O;
     }
-    if (result.u > 255) {
+    if (result > 255) {
       cpu->regs[REG8086_F].x |= F8086_CY;
     }
   }
@@ -380,6 +381,7 @@ static unsigned parse_0030(cpu8086_t* cpu, uint8_t* ins_bytes, int ins) {
         break;
 
         case INS_ADC:
+        {
         uint32_t carry = !!(cpu->regs[REG8086_F].x & F8086_CY);
         uint32_t add32 = cpu->regs[REG8086_AX].x + imm + carry;
         
@@ -391,6 +393,7 @@ static unsigned parse_0030(cpu8086_t* cpu, uint8_t* ins_bytes, int ins) {
         }
 
         cpu->regs[REG8086_AX].x = (uint16_t)add32;
+        }
         break;
 
         case INS_SBB:
@@ -620,39 +623,121 @@ static void test_cycling0(void) {
   free_mem(&mem);
 }
 
+/* Tests update_flags() and its related *_ins() functions. */
+void test_update_flags(void) {
+  cpu8086_t cpu;
+  uint16_t* fptr = &cpu.regs[REG8086_F].x;
+  *fptr = 0;
+
+  update_flags(&cpu, 0, 0);
+
+  add_ins(&cpu, 1, 2, 1);
+  HOPE_THAT(
+    *fptr & F8086_P,
+    "1+2 mean nothing for flags, except parity for 3=0b11."
+  );
+
+  sub_ins(&cpu, 2, 4, 1);
+  HOPE_THAT(
+    *fptr & F8086_CY,
+    "W 2-4 means carry."
+  );
+  HOPE_THAT(
+    !(*fptr & F8086_O),
+    "W 2-4 doesn't mean overflow."
+  );
+
+  sub_ins(&cpu, 2, 131, 0);
+  HOPE_THAT(
+    *fptr & F8086_O,
+    "!W 2-131 means overflow."
+  );
+  HOPE_THAT(
+    *fptr & F8086_CY,
+    "!W 2-131 also means carry."
+  );
+  HOPE_THAT(
+    !(*fptr & F8086_Z),
+    "!W 2-131 doesn't mean zero."
+  );
+  HOPE_THAT(
+    !(*fptr & F8086_S),
+    "!W 2-131 also means positive."
+  );
+
+  sub_ins(&cpu, 2, 131, 1);
+  HOPE_THAT(
+    *fptr & F8086_CY,
+    "W 2-131 means carry."
+  );
+  HOPE_THAT(
+    !(*fptr & F8086_O),
+    "W 2-131 doesn't mean overflow."
+  );
+
+  add_ins(&cpu, 2, 131, 0);
+  HOPE_THAT(
+    !(*fptr & F8086_CY),
+    "!W 2+131 doesn't mean carry."
+  );
+  HOPE_THAT(
+    !(*fptr & F8086_Z),
+    "!W 2+131 doesn't mean zero."
+  );
+  HOPE_THAT(
+    *fptr & F8086_O,
+    "!W 2+131 means overflow."
+  );
+
+  add_ins(&cpu, -2, 2, 1);
+  HOPE_THAT(
+    *fptr & F8086_Z,
+    "!W -2+2 means zero."
+  );
+  HOPE_THAT(
+    !(*fptr & F8086_O),
+    "!W -2+2 doesn't mean overflow."
+  );
+  HOPE_THAT(
+    !(*fptr & F8086_O),
+    "!W -2+2 doesn't mean carry."
+  );
+}
+
 void test_parity_table(void) {
   HOPE_THAT(
     get_arr_bit(parity_table, 0) == 1,
-    "Correct parity for 0."
+    "parity=1 for 0."
   );
   HOPE_THAT(
     get_arr_bit(parity_table, 1) == 0,
-    "Correct parity for 1."
+    "parity=0 for 1."
   );
   HOPE_THAT(
     get_arr_bit(parity_table, 2) == 0,
-    "Correct parity for 2."
+    "parity=0 for 2."
   );
   HOPE_THAT(
     get_arr_bit(parity_table, 3) == 1,
-    "Correct parity for 3."
+    "parity=1 for 3."
   );
   HOPE_THAT(
     get_arr_bit(parity_table, 104) == 0,
-    "Correct parity for 104."
+    "parity=0 for 104."
   );
   HOPE_THAT(
     get_arr_bit(parity_table, 96) == 1,
-    "Correct parity for 96."
+    "Carity =1for 96."
   );
   HOPE_THAT(
     get_arr_bit(parity_table, 108) == 1,
-    "Correct parity for 108."
+    "Cority f=1or 108."
   );
 }
 
 void add_cpu8086_tests(void) {
   ADD_TEST(test_regseg);
+  ADD_TEST(test_update_flags);
   ADD_TEST(test_cycling0);
   ADD_TEST(test_parity_table);
 }
