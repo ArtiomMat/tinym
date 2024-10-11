@@ -95,7 +95,7 @@ static void regseg_sub(reg8086_t* __restrict reg, reg8086_t* __restrict seg, con
   }
 }
 
-/* SAFE 1MB ACCESS. 8 bit equivalent of get16. */
+/* SAFE 1MB ACCESS. 8 bit equivalent of get16(). */
 static uint8_t get8(cpu8086_t* cpu, const uint32_t addr) {
   if (addr >= MB1) {
     cpu->e = E8086_ACCESS_VIOLATION;
@@ -356,8 +356,8 @@ static void parse_alax(cpu8086_t* cpu, uint8_t* ins_bytes, int ins) {
   A specific format of instructions that appear in 0x00-0x30, like ADD in the start, or CMP in the end, they are distinct and can be generalized to this function.
   Returns how much to add to ip_cs.
   It's also applicable to MOV in 0x88-0x8B, even through it doesn't have the AL-AX thingy.
-  INS is the instruction and is from the enum INS_, INS_BYTES is the pointer to the instruction in CPU->mem.
-  Since these instruction can access memory, CPU->e may be set to E8086_ACCESS_VIOLATION.
+  INS is the instruction and is from the enum INS_*, INS_BYTES is the pointer to the instruction in CPU->mem.
+  Since these instruction may access memory, CPU->e may be set to E8086_ACCESS_VIOLATION.
 */
 static unsigned parse_0030(cpu8086_t* cpu, uint8_t* ins_bytes, int ins) {
   uint32_t ip_cs = REGSEG_IP_CS(cpu);
@@ -367,69 +367,51 @@ static unsigned parse_0030(cpu8086_t* cpu, uint8_t* ins_bytes, int ins) {
 
   uint32_t ip_add = 1;
 
-  /* If 3rd bit on it's the INS AL/AX, IMM8/IMM16 thingy, works for both 0x04/5 and 0x0C/D */
+  /*
+    If 3rd bit on it's the INS AL/AX, IMM8/IMM16 thingy, works for both 0x04/5 and 0x0C/D.
+
+    Thanks to the fact that we require little endian and AX.p[0] is the lower byte, we
+    can hit 2 rabbits in one by just using the w_bit and storing it in AX.x
+  */
   if (opcode & 0x4) {
-    if (w_bit) {
-      uint16_t imm = get16(cpu, ip_cs + 1);
-      switch (ins) {
-        case INS_ADD:
-        cpu->regs[REG8086_AX].x += imm;
-        break;
+    uint32_t imm = w_bit ? get16(cpu, ip_cs + 1) : get8(cpu, ip_cs + 1);
+    switch (ins) {
+      case INS_ADD:
+      cpu->regs[REG8086_AX].x = add_ins(cpu, cpu->regs[REG8086_AX].x, imm, w_bit);
+      break;
 
-        case INS_OR:
-        cpu->regs[REG8086_AX].x |= imm;
-        break;
+      case INS_OR:
+      cpu->regs[REG8086_AX].x = or_ins(cpu, cpu->regs[REG8086_AX].x, imm, w_bit);
+      break;
 
-        case INS_ADC:
-        {
-        uint32_t carry = !!(cpu->regs[REG8086_F].x & F8086_CY);
-        uint32_t add32 = cpu->regs[REG8086_AX].x + imm + carry;
-        
-        if (add32 & 0x10000) {
-          cpu->regs[REG8086_F].x |= F8086_CY;
-        }
-        else {
-          cpu->regs[REG8086_F].x &= ~F8086_CY;
-        }
+      case INS_ADC:
+      cpu->regs[REG8086_AX].x = or_adc(cpu, cpu->regs[REG8086_AX].x, imm, w_bit);
+      break;
 
-        cpu->regs[REG8086_AX].x = (uint16_t)add32;
-        }
-        break;
+      case INS_SBB:
+      cpu->regs[REG8086_AX].x = sbb_ins(cpu, cpu->regs[REG8086_AX].x, imm, w_bit);
+      break;
 
-        case INS_SBB:
-        /*TODO*/
-        break;
+      case INS_AND:
+      cpu->regs[REG8086_AX].x = and_ins(cpu, cpu->regs[REG8086_AX].x, imm, w_bit);
+      break;
 
-        case INS_AND:
-        cpu->regs[REG8086_AX].x &= imm;
-        break;
+      case INS_SUB:
+      cpu->regs[REG8086_AX].x = sub_ins(cpu, cpu->regs[REG8086_AX].x, imm, w_bit);
+      break;
 
-        case INS_SUB:
-        cpu->regs[REG8086_AX].x -= imm;
-        break;
+      case INS_XOR:
+      cpu->regs[REG8086_AX].x = xor_ins(cpu, cpu->regs[REG8086_AX].x, imm, w_bit);
+      break;
 
-        case INS_XOR:
-        cpu->regs[REG8086_AX].x ^= imm;
-        break;
-
-        case INS_CMP:
-        if (cpu->regs[REG8086_AX].x == imm) {
-          cpu->regs[REG8086_F].x |= F8086_Z;
-        }
-        else {
-          cpu->regs[REG8086_F].x &= ~F8086_Z;
-        }
-
-        cpu->regs[REG8086_AX].x ^= imm;
-        break;
-      }
-      ip_add = 3;
+      case INS_CMP:
+      cmp_ins(cpu, cpu->regs[REG8086_AX].x, imm, w_bit);
+      break;
     }
-    else {
-      ip_add = 2;
-    }
-    return ip_add;
+    ip_add = w_bit + 2;
   }
+
+  return ip_add;
 }
 
 int cycle_cpu8086(cpu8086_t* cpu) {

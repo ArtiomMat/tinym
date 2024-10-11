@@ -6,6 +6,13 @@
 #include <stdio.h>
 #include <stddef.h>
 
+#if defined(__x86_64__)
+#define GET_BYTE(X, B) (X >> (8 * B))
+#else
+#define GET_BYTE(X, B) (X >> (8 * B))
+#error cant identify system endian.
+#endif
+
 enum {
   BALLOC_X = 1, /* Executable */
   BALLOC_R = 2, /* Readable */
