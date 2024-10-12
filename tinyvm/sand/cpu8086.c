@@ -125,8 +125,8 @@ static void put8(cpu8086_t* cpu, const uint32_t addr, const uint16_t what) {
 /*
   SAFE 1MB ACCESS. 8 bit equivalent of mem_get16(), but there is ofc no need for unaligned checks.
 */
-static uint8_t* mem_get8(cpu8086_t* cpu, uint32_t addr) {
-  addr = regseg_imm(cpu, addr, GET_SEG_DS(cpu)->x); /* Combine with the sreg */
+static uint8_t* mem_get8(cpu8086_t* cpu, uint32_t addr, const int defs) {
+  addr = regseg_imm(cpu, addr, get_seg(cpu, defs)->x); /* Combine with the sreg */
 
   if (addr >= MB1) {
     cpu->e = E8086_ACCESS_VIOLATION;
@@ -143,23 +143,26 @@ static uint8_t* mem_get8(cpu8086_t* cpu, uint32_t addr) {
 */
 static uint16_t get16(cpu8086_t* cpu, uint32_t addr) {
   uint16_t ret;
+  uint8_t* p = cpu->mem->bytes + addr;
 
   if (addr >= MB1 - 1) {
     cpu->e = E8086_ACCESS_VIOLATION;
     return 0;
   }
   
-  memcpy(&ret, cpu->mem->bytes + addr, 2);
+  ret = (uint16_t)p[0] | ((uint16_t)(p[1]) << 8);
+
   return ret;
 }
 /*
   SAFE 1MB ACCESS. Get direct ptr of CPU->mem[ADDR]. Preffered over raw access for: safety(will 
   CPU->e and return undefined but non NULL/unsafe address) & easier for unaligned access.
   Emulates memory access.
+  DEFS must be REG8086_*, it's the default sreg used, pop needs mem_get8/16() + regular addressing.
   As mentioned above, may set CPU->e to E8086_ACCESS_VIOLATION, or E8086_UNALIGNED.
 */
-static uint16_t* mem_get16(cpu8086_t* cpu, uint32_t addr) {
-  addr = regseg_imm(cpu, addr, GET_SEG_DS(cpu)->x); /* Combine with the sreg */
+static uint16_t* mem_get16(cpu8086_t* cpu, uint32_t addr, const int defs) {
+  addr = regseg_imm(cpu, addr, get_seg(cpu, defs)->x); /* Combine with the sreg */
 
   if (addr >= MB1 - 1) {
     cpu->e = E8086_ACCESS_VIOLATION;
@@ -167,9 +170,10 @@ static uint16_t* mem_get16(cpu8086_t* cpu, uint32_t addr) {
   }
   else if (addr & 1) {
     cpu->e = E8086_UNALIGNED;
+    addr &= ~1;
   }
   
-  return (uint16_t*)(cpu->mem->bytes + (addr ^ 1));
+  return (uint16_t*)(cpu->mem->bytes + addr);
 }
 /*
   SAFE 1MB ACCESS. Set CPU->mem[ADDR] = what. Preffered over raw access for: safety(will CPU->e 
@@ -177,12 +181,17 @@ static uint16_t* mem_get16(cpu8086_t* cpu, uint32_t addr) {
   As mentioned above, may set CPU->e to E8086_ACCESS_VIOLATION.
 */
 static void put16(cpu8086_t* cpu, const uint32_t addr, const uint16_t what) {
+  uint8_t* p = cpu->mem->bytes + addr;
+
   if (addr >= MB1 - 1) {
     cpu->e = E8086_ACCESS_VIOLATION;
     return;
   }
   
-  memcpy(cpu->mem->bytes + addr, &what, 2);
+  /* memcpy(cpu->mem->bytes + addr, &what, 2); */
+
+  p[0] = what;
+  p[1] = what >> 8;
 }
 
 /*
@@ -190,7 +199,7 @@ static void put16(cpu8086_t* cpu, const uint32_t addr, const uint16_t what) {
   May set CPU->e to E8086_ACCESS_VIOLATION if the stack wrapped around and wont push. Uses regseg() so may set to its errors.
 */
 static void push16(cpu8086_t* cpu, const uint16_t x) {
-  uint32_t stack_ptr = REGSEG_SP_SS(cpu);
+  uint32_t stack_ptr = regseg_imm(cpu, cpu->regs[REG8086_SP].x, GET_SEG_SS(cpu)->x);
 
   stack_ptr -= 2; /* Since gotta first decrement */
   regseg_sub(&cpu->regs[REG8086_SP], GET_SEG_SS(cpu), 2);
@@ -206,10 +215,10 @@ static void push16(cpu8086_t* cpu, const uint16_t x) {
 */
 static uint16_t pop16(cpu8086_t* cpu) {
   uint16_t ret;
-  uint32_t stack_ptr = REGSEG_SP_SS(cpu);
+  uint32_t stack_ptr = regseg_imm(cpu, cpu->regs[REG8086_SP].x, GET_SEG_SS(cpu)->x);
 
   /* Copy the content before modifying stack_ptr */
-  ret = *mem_get16(cpu, stack_ptr);
+  ret = *mem_get16(cpu, stack_ptr, REG8086_SS);
 
   /* Add 2 back */
   regseg_add(&cpu->regs[REG8086_SP], GET_SEG_SS(cpu), 2);
@@ -440,10 +449,10 @@ static int srcdst_0030(cpu8086_t* cpu, void** dst, void** src) {
   else if ((modrm & MODRM_MOD_MASK) == MOD_NDISP && (modrm & MODRM_RM_MASK) == RM_BP) {
     uint32_t addr = regseg_imm(cpu, get16(cpu, cpu->ip_cs + 2), cpu->regs[REG8086_DS].x);
     if (w_bit) {
-      *src = mem_get16(cpu, addr);
+      *src = mem_get16(cpu, addr, REG8086_DS);
     }
     else {
-      *src = mem_get8(cpu, addr);
+      *src = mem_get8(cpu, addr, REG8086_DS);
     }
     cpu->ip_add = 4;
   }
@@ -488,6 +497,11 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     case 0x3E:
     cpu->seg = REG8086_DS;
     break;
+  }
+  if (cpu->seg != REG8086_NULL) {
+    REGSEG_IP_CS_ADD(cpu, 1);
+    cpu->ip_cs = REGSEG_IP_CS(cpu);
+    cpu->i_ptr = mem->bytes + cpu->ip_cs;
   }
 
   /* INC R16 */
@@ -545,6 +559,34 @@ int cycle_cpu8086(cpu8086_t* cpu) {
       cpu->cycles += 4;
     }
   }
+  /* MOV AL/AX, ADDR or MOV ADDR, AL/AX. So much hard-wired stuff man. */
+  else if (cpu->i_ptr[0] >= 0xA0 && cpu->i_ptr[0] <= 0xA3) {
+    uint8_t d_bit = (cpu->i_ptr[0] & 0x2) >> 1;
+    uint8_t w_bit = cpu->i_ptr[0] & 0x1;
+    uint16_t addr = get16(cpu, cpu->ip_cs + 1);
+    void* ax_al = &cpu->regs[REG8086_AX]; /* Little-endian magic */
+    /* XXX: I hate the way it looks. */
+    if (d_bit) {
+      if (w_bit) {
+        *mem_get16(cpu, addr, REG8086_DS) = *(uint16_t*)ax_al;
+      }
+      else {
+        *mem_get8(cpu, addr, REG8086_DS) = *(uint8_t*)ax_al;
+      }
+    }
+    else {
+      if (w_bit) {
+        *(uint16_t*)ax_al = *mem_get16(cpu, addr, REG8086_DS);
+      }
+      else {
+        *(uint8_t*)ax_al = *mem_get8(cpu, addr, REG8086_DS);
+      }
+    }
+
+    cpu->ip_add = 3;
+    cpu->cycles += 10;
+  }
+  /* UNKNOWN! */
   else {
     if (cpu->i_ptr[0] == 0x66 || cpu->i_ptr[0] == 0x67) {
       fputs("cycle_cpu8086(): you'll need i386 for that.", stderr);
@@ -552,7 +594,6 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     cpu->cycles += 1;
   }
 
-  /*regseg_add(&cpu->regs[REG8086_IP], &cpu->regs[REG8086_CS], cpu->ip_add);*/
   REGSEG_IP_CS_ADD(cpu, cpu->ip_add);
   return cpu->e != E8086_OK;
 }
@@ -658,8 +699,12 @@ static void test_cycling0(void) {
 
   HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
   HOPE_THAT(
-    cpu.regs[REG8086_BX].x == 0x4269 && cpu.regs[REG8086_SP].x == 0xFFFE,
-    "POP BX => BX=0x4269 && SP is back."
+    cpu.regs[REG8086_BX].x == 0x4269,
+    "POP BX => BX=0x4269"
+  );
+  HOPE_THAT(
+    cpu.regs[REG8086_SP].x == 0xFFFE,
+    "SP is back."
   );
   
   HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
@@ -675,6 +720,79 @@ static void test_cycling0(void) {
   );
 
   free_mem(&mem);
+}
+
+/* Tests the mov instructions at 0xA0-0xA3 */
+static void test_a0a3_and_sreg_prefix(void) {
+  cpu8086_t cpu;
+  mem_t mem;
+  const uint8_t code[] = {
+    0x2E, 0xA1, 0x00, 0x10, /* MOV AX, CS:[0x1000] */
+    0x2E, 0xA0, 0x01, 0x10, /* MOV AL, CS:[0x1001] */
+    0x2E, 0xA3, 0x00, 0x10, /* MOV CS:[0x1000], AX */
+    0x3E, 0x50, /* DS:PUSH AX */
+    0x3E, 0x50, /* DS:PUSH AX */
+    0x5B, /* POP BX, no prefix for tests. */
+    0x3E, 0x5B /* DS:POP BX, correct one this time. */
+  };
+
+  HOPE_THAT(
+    init_mem8086(&mem, 0),
+    "Memory initialized."
+  );
+
+  HOPE_THAT(
+    reset_cpu8086(&cpu, &mem),
+    "CPU initialized."
+  );
+  /* Force custom config on some registers for testing purposes */
+  cpu.regs[REG8086_SS].x = 0xF000;
+  cpu.regs[REG8086_DS].x = 0xC000;
+  cpu.regs[REG8086_SP].x = 4; /* To make life easier */
+  cpu.regs[REG8086_CS].x = 0xA000;
+  cpu.regs[REG8086_IP].x = 0;
+  
+  mem.bytes[0xA1000] = 0x33;
+  mem.bytes[0xA1001] = 0x44;
+
+  memcpy(mem.bytes + 0xA0000, code, sizeof (code));
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_AX].x == 0x4433,
+    "MOV AX, CS:[0x1000] => AX=0x4433"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_AX].x == 0x4444,
+    "MOV AL, CS:[0x1001] => AX=0x4444"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    mem.bytes[0xA1000] == 0x44 && mem.bytes[0xA1001] == 0x44,
+    "MOV CS:[0x1000], AX(0x4444)"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_SP].x == 0,
+    "SP should be 0 now."
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_BX].x != 0x4444,
+    "Wrong segment register used so BX shouldn't be 0x4444."
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_BX].x == 0x4444,
+    "Correct segment register used so BX should be 0x4444."
+  );
 }
 
 /* Tests update_flags() and its related *_ins() functions. */
@@ -794,5 +912,6 @@ void add_cpu8086_tests(void) {
   ADD_TEST(test_regseg);
   ADD_TEST(test_update_flags);
   ADD_TEST(test_cycling0);
+  ADD_TEST(test_a0a3_and_sreg_prefix);
   ADD_TEST(test_parity_table);
 }
