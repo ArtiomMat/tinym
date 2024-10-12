@@ -15,7 +15,7 @@ typedef union {
 
 enum {
   REG8086_GENERAL, /* The index of AX, compatible with REGW_* */
-  REG8086_AX = REG8086_GENERAL,
+  REG8086_AX = REG8086_GENERAL, /* (REGW_* - REGW_AX) MUST EQUAL (REG8086_* - REGW_AX) */
   REG8086_CX,
   REG8086_DX,
   REG8086_BX,
@@ -34,8 +34,9 @@ enum {
 
   REG8086_PRIVATE, /* The index of IP, private registers. */
   REG8086_IP = REG8086_PRIVATE,
-  REG8086_F
+  REG8086_F,
 
+  REG8086_NULL /* Used internally to signal "no register, for stuff like prefixing of segment registers." */
 };
 
 /* Error codes */
@@ -43,8 +44,15 @@ enum {
   E8086_OK, /* No error. */
   E8086_UNDEFINED, /* Misc error for undefined operation/behavior. */
   E8086_ACCESS_VIOLATION, /* The CPU would've accessed outside 1MB. */
+  E8086_UNALIGNED, /* Access to memory was unaligned, and not part of 8086 spec. */
   E8086_BAD_OPCODE, /* A bad opcode. */
   E8086_CUT_OFF /* The instruction was cut off. */
+};
+
+/* Interrupts */
+enum {
+  I8086_NULL = -1,
+  I8086_DIVZ, /* Zero division. */
 };
 
 enum {
@@ -61,16 +69,23 @@ enum {
 
 typedef struct {
   mem_t* mem; /* Pointer to the used mem */
-  reg8086_t regs[16];
   uint64_t cycles; /* How many cycles passed. */
-  int e; /* Error code */
+  reg8086_t regs[16];
+  int16_t i; /* Interrupt that was called. */
+  
+  /* cycle_cpu8086() stuff for helper functions to have easy access. Reset and recalculated each cycle. */
+  uint8_t* i_ptr; /* Literal instruction pointer, should be approached with caution ofc. */
+  uint32_t ip_cs; /* Address of current instruction. Reset to REGSEG_IP_CS(CPU). */
+  uint8_t e; /* Error code. Reset to E8086_OK. */
+  uint8_t ip_add; /* How much to be added to IP:CS if instruction succeeds. Reset to 1. */
+  uint8_t seg; /* If REG8086_NULL use default sreg, else this is the sreg prefixed. Reset to REG8086_NULL. */
 } cpu8086_t;
 
 /*
   Returns 0 if MEM is invalid.
   You should use init_mem8086() for MEM, manual also ok but must adhere to standard 8086 mapping.
 */
-int reset_cpu8086(cpu8086_t* __restrict cpu, mem_t* __restrict mem);
+int reset_cpu8086(cpu8086_t* cpu, mem_t* mem);
 void interrupt_cpu8086(cpu8086_t* cpu, uint16_t sig);
 /*
   The function is not necessarily 1 cycle, it simply running the current instruction.

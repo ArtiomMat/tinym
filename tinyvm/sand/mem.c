@@ -130,5 +130,6 @@ static void test_rom(void) {
 }
 
 void add_mem_tests(void) {
+  add_os_tests(); /* Depends on proper functionality of balloc(). */
   ADD_TEST(test_rom);
 }

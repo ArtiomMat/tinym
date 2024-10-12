@@ -1,5 +1,19 @@
 #include "util.h"
 #include <stdio.h>
+#include <string.h>
+
+unsigned args_n = 0;
+const char** args = NULL;
+
+unsigned find_arg(const char* a) {
+  unsigned i;
+  for (i = 1; i < args_n; ++i) {
+    if (!strcmp(args[i], a)) {
+      return i;
+    }
+  }
+  return 0;
+}
 
 int get_arr_bit(const void* _arr, unsigned i) {
   unsigned byte = i >> 3; /* The byte index in question in the loop */

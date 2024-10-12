@@ -11,6 +11,22 @@ static struct {
 static uint16_t test_i;
 static uint16_t tests_n = 0;
 
+#ifdef __linux__
+#include <signal.h>
+#include <asm-generic/siginfo.h>
+
+  static void sigsegv_handler(int sig __attribute__((unused)))
+  {
+    printf(
+      "SEGFAULT.\n"
+      "\n"
+      "FAILED in test %hu/%hu.\n",
+      test_i + 1, tests_n);
+    
+    exit(EXIT_FAILURE);
+  }
+#endif
+
 void init_tests(void) {
   tests = malloc(sizeof (*tests) * MAX_TESTS);
 }
@@ -22,6 +38,14 @@ void free_tests(void) {
 
 /* Returns 1 if test added, 0 if no more space. */
 int add_test(void (*t)(void), const char* name) {
+  unsigned i;
+  /* Make sure they were not already added. */
+  for (i = 0; i < tests_n; i++) {
+    if (tests[i].t == t) {
+      return 1;
+    }
+  }
+
   if (tests_n == MAX_TESTS) {
     return 0;
   }
@@ -34,12 +58,16 @@ int add_test(void (*t)(void), const char* name) {
 }
 
 void run_tests(void) {
+  __sighandler_t prev_sigsegv_handler = signal(SIGSEGV, sigsegv_handler);
+
   for (test_i = 0; test_i < tests_n; ++test_i) {
     printf("* running '%s'...", tests[test_i].name);
     tests[test_i].t();
-    puts("SUCCESS");
+    puts("SUCCESS.");
   }
-  puts("\nall tests succeeeded.\n");
+  puts("\nSUCCEEDED in all tests.\n");
+
+  signal(SIGSEGV, prev_sigsegv_handler);
 }
 
 void hope_that(int cond, const char* msg) {
@@ -51,12 +79,12 @@ void _hope_that(int cond, const char* file, int line, const char* msg) {
     return;
   }
 
-  puts("FAILED");
+  puts("FAILED.");
 
   if (file != NULL) { /* Comes from HOPE_THAT() macro and not hope_that() */
     printf("%s:%d: ", file, line);
   }
 
-  printf("hoped that '%s'\n\nfailed test %hu/%hu.\n", msg, test_i + 1, tests_n);
-  exit(1);
+  printf("hoped that '%s'\n\nFAILED in test %hu/%hu.\n", msg, test_i + 1, tests_n);
+  exit(EXIT_FAILURE);
 }

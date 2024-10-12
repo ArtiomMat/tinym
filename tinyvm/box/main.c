@@ -7,21 +7,11 @@
 #include <string.h>
 #include <stdio.h>
 
-int args_n;
-const char** args;
 
-/*
-  Find A in argv.
-  Returns 0 if not found(the first argument is useless), otherwise index.
-*/
-unsigned find_arg(const char* a) {
-  int i;
-  for (i = 1; i < args_n; ++i) {
-    if (!strcmp(args[i], a)) {
-      return i;
-    }
-  }
-  return 0;
+static void add_all_tests(void) {
+  add_mem_tests();
+  add_cpu8086_tests();
+  add_os_tests();
 }
 
 int main(int _args_n, const char** _args) {
@@ -32,17 +22,34 @@ int main(int _args_n, const char** _args) {
   args_n = _args_n;
   args = _args;
 
-  if (find_arg("--test")) {
+  i = find_arg("--test");
+  if (i) {
+    ++i;
+    if (i >= args_n) {
+      puts("--test must be followed by: all/os/cpu8086/mem");
+      return 1;
+    }
     init_tests();
-
-    add_mem_tests();
-    add_cpu8086_tests();
+    
+    if (!strcmp(args[i], "all")) {
+      add_all_tests();
+    }
+    else if (!strcmp(args[i], "cpu8086")) {
+      add_cpu8086_tests();
+    }
+    else if (!strcmp(args[i], "os")) {
+      add_os_tests();
+    }
+    else if (!strcmp(args[i], "mem")) {
+      add_mem_tests();
+    }
 
     run_tests();
     free_tests();
   }
 
-  if (i = find_arg("--boot-sector")) {
+  i = find_arg("--boot-sector");
+  if (i) {
     
   }
 
@@ -55,7 +62,8 @@ int main(int _args_n, const char** _args) {
   reset_cpu8086(&cpu, &mem);
 
   while (1) {
-    if (i = cycle_cpu8086(&cpu)) {
+    i = cycle_cpu8086(&cpu);
+    if (i) {
       printf("Error: %u.\n", i);
       return 1;
     }

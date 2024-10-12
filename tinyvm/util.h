@@ -1,6 +1,15 @@
 #ifndef UTIL_H
 #define UTIL_H
 
+extern unsigned args_n;
+extern const char** args;
+
+/*
+  Find A in args.
+  Returns 0 if not found(the first argument is useless), otherwise index.
+*/
+unsigned find_arg(const char* a);
+
 /* It's for source code and caching in constant memory. */
 void print_parity_table(void);
 
