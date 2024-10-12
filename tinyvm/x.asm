@@ -1,4 +1,3 @@
-mov ax, 0x4269
-push ax
-pop bx
-inc bx
+; that cs: would cause first byte to be 2e for PREFIX CS
+; mov ax, ADDR causes 0xA1 opcode...
+mov ax, cs:[0x6969]

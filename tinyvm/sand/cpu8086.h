@@ -52,7 +52,7 @@ enum {
 /* Interrupts */
 enum {
   I8086_NULL = -1,
-  I8086_DIVZ, /* Zero division. */
+  I8086_DIVZ /* Zero division. */
 };
 
 enum {

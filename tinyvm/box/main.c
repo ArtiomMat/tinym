@@ -9,9 +9,10 @@
 
 
 static void add_all_tests(void) {
-  add_mem_tests();
-  add_cpu8086_tests();
+  /* Already included in cpu8086
   add_os_tests();
+  add_mem_tests(); */
+  add_cpu8086_tests();
 }
 
 int main(int _args_n, const char** _args) {

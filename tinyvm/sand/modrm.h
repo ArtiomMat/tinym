@@ -6,7 +6,7 @@
 enum {
   MODRM_MOD_MASK = 0x3 << 6,
   MODRM_REG_MASK = 0x7 << 3,
-  MODRM_RM_MASK = 0x7,
+  MODRM_RM_MASK = 0x7
 };
 
 enum {
@@ -45,10 +45,10 @@ enum {
 
 /* Segment registers in special instructions where the destination operand is the  */
 enum {
-  SEG_ES = 0 << 6,
-  SEG_CS = 1 << 6,
-  SEG_SS = 2 << 6,
-  SEG_DS = 3 << 6,
+  SEG_ES = 0 << 3,
+  SEG_CS = 1 << 3,
+  SEG_SS = 2 << 3,
+  SEG_DS = 3 << 3,
 
   /* 386+ segment registers */
   SEG_FS, SEG_GS
@@ -60,14 +60,14 @@ enum {
   expanded.
 */
 enum {
-  RM_BX_SI = 0 << 3,
-  RM_BX_DI = 1 << 3,
-  RM_BP_SI = 2 << 3,
-  RM_BP_DI = 3 << 3,
-  RM_SI = 4 << 3,
-  RM_DI = 5 << 3,
-  RM_BP = 6 << 3, /* This one is special, for MOD=0 it's "direct address", otherwise BP + MOD's displacement config */
-  RM_BX = 7 << 3
+  RM_BX_SI = 0,
+  RM_BX_DI = 1,
+  RM_BP_SI = 2,
+  RM_BP_DI = 3,
+  RM_SI = 4,
+  RM_DI = 5,
+  RM_BP = 6, /* This one is special, for MOD=0 it's "direct address", otherwise BP + MOD's displacement config */
+  RM_BX = 7
 };
 
 #endif

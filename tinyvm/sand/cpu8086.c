@@ -15,14 +15,14 @@
 #define REGSEG_IP_CS(CPU) regseg_imm(CPU, CPU->regs[REG8086_IP].x, CPU->regs[REG8086_CS].x)
 #define REGSEG_IP_CS_ADD(CPU, N) regseg_add(&CPU->regs[REG8086_IP], &CPU->regs[REG8086_CS], N)
 #define REGSEG_IP_CS_SUB(CPU, N) regseg_sub(&CPU->regs[REG8086_IP], &CPU->regs[REG8086_CS], N)
-/* CS is DEFS */
-#define GET_SEG_CS(CPU) get_seg(CPU, REG8086_CS)
-/* DS is DEFS */
-#define GET_SEG_DS(CPU) get_seg(CPU, REG8086_DS)
 /* ES is DEFS */
 #define GET_SEG_ES(CPU) get_seg(CPU, REG8086_ES)
+/* CS is DEFS */
+#define GET_SEG_CS(CPU) get_seg(CPU, REG8086_CS)
 /* SS is DEFS */
 #define GET_SEG_SS(CPU) get_seg(CPU, REG8086_SS)
+/* DS is DEFS */
+#define GET_SEG_DS(CPU) get_seg(CPU, REG8086_DS)
 
 static const uint8_t parity_table[] = {
   0x69, 0x96, 0x96, 0x69, 0x96, 0x69, 0x69, 0x96, 0x96, 0x69, 0x69, 0x96, 0x69, 0x96, 0x96, 0x69, 
@@ -33,7 +33,7 @@ int reset_cpu8086(cpu8086_t* cpu, mem_t* mem) {
   /* Set up register starting points */
   memset(cpu->regs, 0, sizeof (cpu->regs));
   cpu->regs[REG8086_CS].x = 0xFFFF;
-  cpu->regs[REG8086_SP].x = 0xFFFF; /* TODO: Not an actual standard config. */
+  cpu->regs[REG8086_SP].x = 0xFFFE;
   cpu->regs[REG8086_F].x |= F8086_I;
 
   /* A minimum size for addressable memory. */
@@ -50,11 +50,11 @@ int reset_cpu8086(cpu8086_t* cpu, mem_t* mem) {
   Returns the sreg, if CPU->seg has been specified(mainly via prefixes), that will be used as 
   override, otherwise the default, DEFS is the default REG8086_* that should be used.
 */
-static uint16_t get_seg(cpu8086_t* cpu, const int defs) {
+static reg8086_t* get_seg(cpu8086_t* cpu, const int defs) {
   if (cpu->seg != REG8086_NULL) {
-    return cpu->regs[cpu->seg].x;
+    return cpu->regs + cpu->seg;
   }
-  return cpu->regs[defs].x;
+  return cpu->regs + defs;
 }
 
 /*
@@ -125,7 +125,9 @@ static void put8(cpu8086_t* cpu, const uint32_t addr, const uint16_t what) {
 /*
   SAFE 1MB ACCESS. 8 bit equivalent of mem_get16(), but there is ofc no need for unaligned checks.
 */
-static uint16_t* mem_get8(cpu8086_t* cpu, const uint32_t addr) {
+static uint8_t* mem_get8(cpu8086_t* cpu, uint32_t addr) {
+  addr = regseg_imm(cpu, addr, GET_SEG_DS(cpu)->x); /* Combine with the sreg */
+
   if (addr >= MB1) {
     cpu->e = E8086_ACCESS_VIOLATION;
     return cpu->mem->bytes;
@@ -139,7 +141,7 @@ static uint16_t* mem_get8(cpu8086_t* cpu, const uint32_t addr) {
   CPU->e and return invalid but safely constructed value) & deals with unaligned address.
   As mentioned above, may set CPU->e to E8086_ACCESS_VIOLATION.
 */
-static uint16_t get16(cpu8086_t* cpu, const uint32_t addr) {
+static uint16_t get16(cpu8086_t* cpu, uint32_t addr) {
   uint16_t ret;
 
   if (addr >= MB1 - 1) {
@@ -156,16 +158,18 @@ static uint16_t get16(cpu8086_t* cpu, const uint32_t addr) {
   Emulates memory access.
   As mentioned above, may set CPU->e to E8086_ACCESS_VIOLATION, or E8086_UNALIGNED.
 */
-static uint16_t* mem_get16(cpu8086_t* cpu, const uint32_t addr) {
+static uint16_t* mem_get16(cpu8086_t* cpu, uint32_t addr) {
+  addr = regseg_imm(cpu, addr, GET_SEG_DS(cpu)->x); /* Combine with the sreg */
+
   if (addr >= MB1 - 1) {
     cpu->e = E8086_ACCESS_VIOLATION;
-    return cpu->mem->bytes;
+    return (uint16_t*)(cpu->mem->bytes);
   }
   else if (addr & 1) {
     cpu->e = E8086_UNALIGNED;
   }
   
-  return cpu->mem->bytes + (addr ^ 1);
+  return (uint16_t*)(cpu->mem->bytes + (addr ^ 1));
 }
 /*
   SAFE 1MB ACCESS. Set CPU->mem[ADDR] = what. Preffered over raw access for: safety(will CPU->e 
@@ -189,7 +193,7 @@ static void push16(cpu8086_t* cpu, const uint16_t x) {
   uint32_t stack_ptr = REGSEG_SP_SS(cpu);
 
   stack_ptr -= 2; /* Since gotta first decrement */
-  regseg_sub(&cpu->regs[REG8086_SP], &cpu->regs[REG8086_SS], 2);
+  regseg_sub(&cpu->regs[REG8086_SP], GET_SEG_SS(cpu), 2);
 
   /* Now copy the register contents */
   put16(cpu, stack_ptr, x);
@@ -205,10 +209,10 @@ static uint16_t pop16(cpu8086_t* cpu) {
   uint32_t stack_ptr = REGSEG_SP_SS(cpu);
 
   /* Copy the content before modifying stack_ptr */
-  ret = get16(cpu, stack_ptr);
+  ret = *mem_get16(cpu, stack_ptr);
 
   /* Add 2 back */
-  regseg_add(&cpu->regs[REG8086_SP], &cpu->regs[REG8086_SS], 2);
+  regseg_add(&cpu->regs[REG8086_SP], GET_SEG_SS(cpu), 2);
 
   return ret;
 }
@@ -435,7 +439,12 @@ static int srcdst_0030(cpu8086_t* cpu, void** dst, void** src) {
   /* Direct addressing */
   else if ((modrm & MODRM_MOD_MASK) == MOD_NDISP && (modrm & MODRM_RM_MASK) == RM_BP) {
     uint32_t addr = regseg_imm(cpu, get16(cpu, cpu->ip_cs + 2), cpu->regs[REG8086_DS].x);
-    *src = w_bit ? mem_get16(cpu, addr) : mem_get8(cpu, addr);
+    if (w_bit) {
+      *src = mem_get16(cpu, addr);
+    }
+    else {
+      *src = mem_get8(cpu, addr);
+    }
     cpu->ip_add = 4;
   }
   else {
@@ -449,9 +458,8 @@ static int srcdst_0030(cpu8086_t* cpu, void** dst, void** src) {
   if (d_bit) {
     void* tmp = *src;
     *src = *dst;
-    *dst = *src;
+    *dst = tmp;
   }
-
 
   return w_bit;
 }
@@ -465,18 +473,34 @@ int cycle_cpu8086(cpu8086_t* cpu) {
   cpu->i_ptr = mem->bytes + cpu->ip_cs;
   cpu->seg = REG8086_NULL;
 
-  /* Parse prefixes */
+  /* TODO: Make multi-prefix support, since it's possible I think? */
+  /* Prefixes */
+  switch (cpu->i_ptr[0]) {
+    case 0x26:
+    cpu->seg = REG8086_ES;
+    break;
+    case 0x36:
+    cpu->seg = REG8086_SS;
+    break;
+    case 0x2E:
+    cpu->seg = REG8086_CS;
+    break;
+    case 0x3E:
+    cpu->seg = REG8086_DS;
+    break;
+  }
 
-  /* Instructions that simply act on the 16-bit registers in order. */
   /* INC R16 */
   if (cpu->i_ptr[0] >= 0x40 && cpu->i_ptr[0] <= 0x47) {
-    ++ (cpu->regs[REG8086_AX + (cpu->i_ptr[0] & 7)].x);
+    uint16_t* ptr = &cpu->regs[REG8086_AX + (cpu->i_ptr[0] & 7)].x;
+    *ptr = add_ins(cpu, *ptr, 1, 1);
     cpu->cycles += 2;
     cpu->ip_add = 1;
   }
   /* DEC R16 */
   else if (cpu->i_ptr[0] >= 0x48 && cpu->i_ptr[0] <= 0x4F) {
-    -- (cpu->regs[REG8086_AX + (cpu->i_ptr[0] & 7)].x);
+    uint16_t* ptr = &cpu->regs[REG8086_AX + (cpu->i_ptr[0] & 7)].x;
+    *ptr = sub_ins(cpu, *ptr, 1, 1);
     cpu->cycles += 2;
     cpu->ip_add = 1;
   }
@@ -617,7 +641,6 @@ static void test_cycling0(void) {
   /* Force custom config on some registers for testing purposes */
   cpu.regs[REG8086_CS].x = 0;
   cpu.regs[REG8086_SS].x = 0xF000;
-  cpu.regs[REG8086_SP].x = 0xFFF0;
 
   memcpy(mem.bytes, code, sizeof (code));
 
@@ -629,13 +652,13 @@ static void test_cycling0(void) {
 
   HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
   HOPE_THAT(
-    mem.bytes[0xFFFEE] == 0x69 && mem.bytes[0xFFFEF] == 0x42,
+    mem.bytes[0xFFFFC] == 0x69 && mem.bytes[0xFFFFD] == 0x42,
     "PUSH AX."
   );
 
   HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
   HOPE_THAT(
-    cpu.regs[REG8086_BX].x == 0x4269 && cpu.regs[REG8086_SP].x == 0xFFF0,
+    cpu.regs[REG8086_BX].x == 0x4269 && cpu.regs[REG8086_SP].x == 0xFFFE,
     "POP BX => BX=0x4269 && SP is back."
   );
   
