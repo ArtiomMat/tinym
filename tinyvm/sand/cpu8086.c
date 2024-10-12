@@ -404,8 +404,9 @@ static int check_cond_jmp(cpu8086_t* cpu, uint8_t ins_byte) {
 
 /*
   * INS_BYTES must be a valid pointer within CPU->mem->bytes!!!
-  * A specific format of instructions that appear in 0x00-0x30, like ADD in the start, or CMP in the end, they are distinct and can be generalized to this function.
-  * It's also applicable to MOV in 0x88-0x8B, even through it doesn't have the AL-AX thingy.
+  * A specific format of instructions that appear in 0x00-0x30, like ADD in the start, or CMP in the end, they are distinct and can be generalized to this source-destination retrieval.
+  * It's also applicable to MOV in 0x88-0x8B, even through it doesn't have the AL-AX thingy, due 
+  * to modulu-like design, and 8086 aligned stuff nicely.
 
   * *SRC is the source(copied/utilized/constant) operand.
   * *DST is (usually, but sometimes 
@@ -437,15 +438,17 @@ static int srcdst_0030(cpu8086_t* cpu, void** dst, void** src) {
 
   modrm = get8(cpu, cpu->ip_cs + 1);
 
+  /* DST: */
   /* Simply index the register according to REG field, since REG8086_* is compatible. */
   *dst = &cpu->regs[(modrm & MODRM_REG_MASK) - REGW_AX].x;
 
-  /* Now for the src which is a little harder... */
+  /* SRC: */
+  /* R/M is REG, MOD=3 */
   if ((modrm & MODRM_MOD_MASK) == MOD_RM_IS_REG) {
     /* 3 bits right fit the REG mask */
     *src = &cpu->regs[((modrm << 3) & MODRM_REG_MASK) - REGW_AX].x;
   }
-  /* Direct addressing */
+  /* Direct addressing, MOD=0,R/M=6 */
   else if ((modrm & MODRM_MOD_MASK) == MOD_NDISP && (modrm & MODRM_RM_MASK) == RM_BP) {
     uint32_t addr = regseg_imm(cpu, get16(cpu, cpu->ip_cs + 2), cpu->regs[REG8086_DS].x);
     if (w_bit) {
@@ -456,12 +459,51 @@ static int srcdst_0030(cpu8086_t* cpu, void** dst, void** src) {
     }
     cpu->ip_add = 4;
   }
+  /* Using various register-displacement combinations depending on MOD+R/M */
   else {
-    
-    
-    switch (modrm & MODRM_RM_MASK) {
-    }
+    uint32_t addr;
 
+    /* Add displacement */
+    switch (modrm & MODRM_MOD_MASK) {
+      case MOD_NDISP:
+      addr = get16(cpu, cpu->ip_cs + 2);
+      break;
+
+      case MOD_DISP8:
+      addr = get8(cpu, cpu->ip_cs + 2);
+      break;
+
+      case MOD_DISP16:
+      addr = 0;
+      break;
+    }
+    /* Add the register stuff */
+    switch (modrm & MODRM_RM_MASK) {
+      case RM_BX_SI:
+      addr += cpu->regs[REG8086_BX].x + cpu->regs[REG8086_SI].x + GET_SEG_DS(cpu)->x;
+      break;
+      case RM_BX_DI:
+      addr += cpu->regs[REG8086_BX].x + cpu->regs[REG8086_DI].x + GET_SEG_DS(cpu)->x;
+      break;
+      case RM_BP_SI:
+      addr += cpu->regs[REG8086_BP].x + cpu->regs[REG8086_SI].x + GET_SEG_SS(cpu)->x;
+      break;
+      case RM_BP_DI:
+      addr += cpu->regs[REG8086_BP].x + cpu->regs[REG8086_DI].x + GET_SEG_SS(cpu)->x;
+      break;
+      case RM_SI:
+      addr += cpu->regs[REG8086_SI].x + GET_SEG_DS(cpu)->x;
+      break;
+      case RM_DI:
+      addr += cpu->regs[REG8086_DI].x + GET_SEG_DS(cpu)->x;
+      break;
+      case RM_BP:
+      addr += cpu->regs[REG8086_BP].x + GET_SEG_SS(cpu)->x;
+      break;
+      case RM_BX:
+      addr += cpu->regs[REG8086_BX].x + GET_SEG_DS(cpu)->x;
+      break;
+    }
   }
 
   if (d_bit) {

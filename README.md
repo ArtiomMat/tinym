@@ -4,8 +4,10 @@ Written entirely in ANSI C, 0 dependency, -pedantic.
 
 # Virtualization progress
 "roleh" from [here](https://hackaday.io/project/193288-improved-8086-opcode-map) built a really nice map for 8086 instructions, helps a lot! So here's the current progress on the 8086 CPU:
-![](8086.png)
-Green means it's finished(mostly tested), red means that it will be implemented soon.
+![](8086-progress.png)
+Green - Implemented, pretty well tested.\
+Yellow - Implemented, in theory, not tested enough to be green.\
+Red - Unimplemented, on the radar to be implemented next.
 
 # Trigger warning
 The VM might be innacurate, simulating things incorrectly while appearing to give the same result,
