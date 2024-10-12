@@ -25,7 +25,9 @@ add_executable(
   ${BOX_SRC} ${SAND_SRC} ${SHARED_SRC})
 
 target_compile_options(${PROJECT_NAME} PRIVATE 
-  -Wall -Wextra -pedantic -ansi -O3 -flto=auto
+  -Wall -Wextra -pedantic -ansi
+  $<$<CONFIG:Debug>:-ggdb>
+  $<$<CONFIG:Release>:-O3 -flto=auto -DNDEBUG>
   ${PLATFORM_FLAGS})
 
 target_link_options(${PROJECT_NAME} PRIVATE ${PLATFORM_LINKS})
