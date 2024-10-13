@@ -74,7 +74,6 @@ typedef struct {
   int16_t i; /* Interrupt that was called. */
   
   /* cycle_cpu8086() stuff for helper functions to have easy access. Reset and recalculated each cycle. */
-  uint8_t* i_ptr; /* Literal instruction pointer, should be approached with caution ofc. */
   uint32_t ip_cs; /* Address of current instruction. Reset to REGSEG_IP_CS(CPU). */
   uint8_t e; /* Error code. Reset to E8086_OK. */
   uint8_t ip_add; /* How much to be added to IP:CS if instruction succeeds. Reset to 1. */

@@ -347,55 +347,55 @@ static void short_jump(cpu8086_t* cpu, int8_t rel_addr) {
 
 /*
   Returns whether according to the first instruction byte the CPU should do conditional jump.
-  INS_BYTE is the opcode byte, it must be 0x70-0x7F inclusive.
+  OPCODE is the opcode byte, it must be 0x70-0x7F inclusive.
 */
-static int check_cond_jmp(cpu8086_t* cpu, uint8_t ins_byte) {
+static int check_cond_jmp(cpu8086_t* cpu, uint8_t opcode) {
   int do_jump;
   uint16_t f = cpu->regs[REG8086_F].x;
 
   /*
-    A pattern is that if (ins_byte&1) is 1 then it's the NOT equivalent.
+    A pattern is that if (opcode&1) is 1 then it's the NOT equivalent.
     I exploit it to less boilerplate code for both the normal and NOT versions.
   */
-  switch (ins_byte & 0xF) {
+  switch (opcode & 0xF) {
     case 0x00: /* JO */
     case 0x01: /* JNO */
-    do_jump = (ins_byte&1) ^ (!!(f & F8086_O));
+    do_jump = (opcode&1) ^ (!!(f & F8086_O));
     break;
 
     case 0x02: /* JC/JB/JNAE */
     case 0x03: /* JNC/JNB/JAE */
-    do_jump = (ins_byte&1) ^ (!!(f & F8086_CY));
+    do_jump = (opcode&1) ^ (!!(f & F8086_CY));
     break;
 
     case 0x04: /* JE/JZ */
     case 0x05: /* JNE/JNZ */
-    do_jump = (ins_byte&1) ^ (!!(f & F8086_Z));
+    do_jump = (opcode&1) ^ (!!(f & F8086_Z));
     break;
     
     case 0x06: /* JBE/JNA */
     case 0x07: /* JA/JNBE */
-    do_jump = (ins_byte&1) ^ ((!!(f & F8086_CY)) | (!!(f & F8086_Z))); 
+    do_jump = (opcode&1) ^ ((!!(f & F8086_CY)) | (!!(f & F8086_Z))); 
     break;
 
     case 0x08: /* JS */
     case 0x09: /* JNS */
-    do_jump = (ins_byte&1) ^ (!!(f & F8086_S));
+    do_jump = (opcode&1) ^ (!!(f & F8086_S));
     break;
 
     case 0x0A: /* JP/JPE */
     case 0x0B: /* JNP/JPO */
-    do_jump = (ins_byte&1) ^ (!!(f & F8086_P));
+    do_jump = (opcode&1) ^ (!!(f & F8086_P));
     break;
 
     case 0x0C: /* JL/JNGE */
     case 0x0D: /* JGE/JNL */
-    do_jump = (ins_byte&1) ^ (!!(f & F8086_S)) ^ (!!(f & F8086_O));
+    do_jump = (opcode&1) ^ (!!(f & F8086_S)) ^ (!!(f & F8086_O));
     break;
 
     case 0x0E: /* JLE/JNG */
     case 0x0F: /* JGE/J */
-    do_jump = (ins_byte&1) ^ (((!!(f & F8086_S)) ^ (!!(f & F8086_O))) | (!!(f & F8086_Z)));
+    do_jump = (opcode&1) ^ (((!!(f & F8086_S)) ^ (!!(f & F8086_O))) | (!!(f & F8086_Z)));
     break;
   }
 
@@ -403,32 +403,135 @@ static int check_cond_jmp(cpu8086_t* cpu, uint8_t ins_byte) {
 }
 
 /*
-  * INS_BYTES must be a valid pointer within CPU->mem->bytes!!!
+  * CPU->ip_cs is expected to be at the first byte, not modrm.
+  * MODRM is the modr/m byte.
+  * W_BIT indicates if it's a word operation, and hence the size of the data in the pointer.
+  * Returns a pointer to the register referenced by the REG field.
+*/
+static void* get_modrm_reg(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
+  /* Since REG8086_* is compatible + Little-endain makes stuff easier. */
+  return &cpu->regs[(modrm & MODRM_REG_MASK) - REGW_AX].x;
+}
+
+/*
+  * CPU->ip_cs is expected to be at the first byte, not modrm.
+  * MODRM is the modr/m byte.
+  * W_BIT indicates if it's a word operation, and hence the size of the data in the pointer.
+  * Returns a pointer to the *SEGMENT REGISTER* referenced by the REG field.
+*/
+static void* get_modrm_seg(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
+  switch (modrm & MODRM_REG_MASK) {
+    case SEG_ES:
+    return &cpu->regs[REG8086_ES];
+    case SEG_CS:
+    return &cpu->regs[REG8086_CS];
+    case SEG_SS:
+    return &cpu->regs[REG8086_SS];
+    default:
+    return &cpu->regs[REG8086_DS];
+  }
+}
+
+/*
+  * CPU->ip_cs is expected to be at the first byte, not modrm.
+  * MODRM is the modr/m byte.
+  * W_BIT indicates if it's a word operation, and hence the size of the data in the pointer.
+  * Returns a pointer to what the R/M points to, e.g address in CPU->mem, or a register.
+*/
+static void* get_modrm_rm(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
+  void* rm;
+  uint32_t addr;
+
+  /* R/M is REG, MOD=3 */
+  if ((modrm & MODRM_MOD_MASK) == MOD_RM_IS_REG) {
+    /* 3 bits right fit the REG mask */
+    rm = &cpu->regs[((modrm << 3) & MODRM_REG_MASK) - REGW_AX].x;
+  }
+  /* Direct addressing, MOD=0,R/M=6 */
+  else if ((modrm & MODRM_MOD_MASK) == MOD_NDISP && (modrm & MODRM_RM_MASK) == RM_BP) {
+    addr = regseg_imm(cpu, get16(cpu, cpu->ip_cs + 2), cpu->regs[REG8086_DS].x);
+    cpu->ip_add = 4;
+  }
+  /* Using various register-displacement combinations depending on MOD+R/M */
+  else {
+    /* Add the register stuff */
+    switch (modrm & MODRM_RM_MASK) {
+      case RM_BX_SI:
+      addr = cpu->regs[REG8086_BX].x + cpu->regs[REG8086_SI].x + GET_SEG_DS(cpu)->x;
+      break;
+      case RM_BX_DI:
+      addr = cpu->regs[REG8086_BX].x + cpu->regs[REG8086_DI].x + GET_SEG_DS(cpu)->x;
+      break;
+      case RM_BP_SI:
+      addr = cpu->regs[REG8086_BP].x + cpu->regs[REG8086_SI].x + GET_SEG_SS(cpu)->x;
+      break;
+      case RM_BP_DI:
+      addr = cpu->regs[REG8086_BP].x + cpu->regs[REG8086_DI].x + GET_SEG_SS(cpu)->x;
+      break;
+      case RM_SI:
+      addr = cpu->regs[REG8086_SI].x + GET_SEG_DS(cpu)->x;
+      break;
+      case RM_DI:
+      addr = cpu->regs[REG8086_DI].x + GET_SEG_DS(cpu)->x;
+      break;
+      case RM_BP:
+      addr = cpu->regs[REG8086_BP].x + GET_SEG_SS(cpu)->x;
+      break;
+      case RM_BX:
+      addr = cpu->regs[REG8086_BX].x + GET_SEG_DS(cpu)->x;
+      break;
+    }
+    /* Add displacement */
+    switch (modrm & MODRM_MOD_MASK) {
+      case MOD_NDISP:
+      addr += get16(cpu, cpu->ip_cs + 2);
+      break;
+
+      case MOD_DISP8:
+      addr += get8(cpu, cpu->ip_cs + 2);
+      break;
+
+      case MOD_DISP16:
+      addr += 0;
+      break;
+    }
+  }
+
+  if (w_bit) {
+    rm = mem_get16(cpu, addr, REG8086_DS);
+  }
+  else {
+    rm = mem_get8(cpu, addr, REG8086_DS);
+  }
+
+  return rm;
+}
+
+/*
   * A specific format of instructions that appear in 0x00-0x30, like ADD in the start, or CMP in the end, they are distinct and can be generalized to this source-destination retrieval.
   * It's also applicable to MOV in 0x88-0x8B, even through it doesn't have the AL-AX thingy, due 
   * to modulu-like design, and 8086 aligned stuff nicely.
 
   * *SRC is the source(copied/utilized/constant) operand.
-  * *DST is (usually, but sometimes 
-  theoretically) modified operand.
-  * *IP_ADD(how much to add to the insturction-pointer) will be set according to the instruction.
+  * *DST is (usually, but sometimes theoretically) modified operand.
+  * OPCODE is the opcode byte.
 
   * Returns if W bit was on, so you know if *SRC and *DST are uint16_t or uint8_t.
 */
-static int srcdst_0030(cpu8086_t* cpu, void** dst, void** src) {
+static int get_srcdst_0030(cpu8086_t* cpu, uint8_t opcode, void** dst, void** src) {
   /*
     In case we need to return copies/constants, that aren't easily referencable, like immidietes 
     that may be unaligned.
   */
   static uint16_t s_src, s_dst;
 
-  uint8_t opcode = (cpu->i_ptr[0] & 0xFC) >> 2;
-  uint8_t d_bit = (cpu->i_ptr[0] & 0x2) >> 1;
-  uint8_t w_bit = cpu->i_ptr[0] & 0x1;
+  uint8_t i_bits = (opcode & 0xFC) >> 2;
+  uint8_t d_bit = (opcode & 0x2) >> 1;
+  uint8_t w_bit = opcode & 0x1;
   uint8_t modrm;
   
   /* If 3rd bit on it's the INS AL/AX, IMM8/IMM16 thingy, works for both 0x04/5 and 0x0C/D. */
-  if (opcode & 0x4) {
+  if (i_bits & 0x4) {
     s_src = w_bit ? get16(cpu, cpu->ip_cs + 1) : get8(cpu, cpu->ip_cs + 1);
     *dst = &cpu->regs[REG8086_AX].x; /* &p[0] is &x so no checks. Little-endian rules. */
     *src = &s_src;
@@ -438,73 +541,8 @@ static int srcdst_0030(cpu8086_t* cpu, void** dst, void** src) {
 
   modrm = get8(cpu, cpu->ip_cs + 1);
 
-  /* DST: */
-  /* Simply index the register according to REG field, since REG8086_* is compatible. */
-  *dst = &cpu->regs[(modrm & MODRM_REG_MASK) - REGW_AX].x;
-
-  /* SRC: */
-  /* R/M is REG, MOD=3 */
-  if ((modrm & MODRM_MOD_MASK) == MOD_RM_IS_REG) {
-    /* 3 bits right fit the REG mask */
-    *src = &cpu->regs[((modrm << 3) & MODRM_REG_MASK) - REGW_AX].x;
-  }
-  /* Direct addressing, MOD=0,R/M=6 */
-  else if ((modrm & MODRM_MOD_MASK) == MOD_NDISP && (modrm & MODRM_RM_MASK) == RM_BP) {
-    uint32_t addr = regseg_imm(cpu, get16(cpu, cpu->ip_cs + 2), cpu->regs[REG8086_DS].x);
-    if (w_bit) {
-      *src = mem_get16(cpu, addr, REG8086_DS);
-    }
-    else {
-      *src = mem_get8(cpu, addr, REG8086_DS);
-    }
-    cpu->ip_add = 4;
-  }
-  /* Using various register-displacement combinations depending on MOD+R/M */
-  else {
-    uint32_t addr;
-
-    /* Add displacement */
-    switch (modrm & MODRM_MOD_MASK) {
-      case MOD_NDISP:
-      addr = get16(cpu, cpu->ip_cs + 2);
-      break;
-
-      case MOD_DISP8:
-      addr = get8(cpu, cpu->ip_cs + 2);
-      break;
-
-      case MOD_DISP16:
-      addr = 0;
-      break;
-    }
-    /* Add the register stuff */
-    switch (modrm & MODRM_RM_MASK) {
-      case RM_BX_SI:
-      addr += cpu->regs[REG8086_BX].x + cpu->regs[REG8086_SI].x + GET_SEG_DS(cpu)->x;
-      break;
-      case RM_BX_DI:
-      addr += cpu->regs[REG8086_BX].x + cpu->regs[REG8086_DI].x + GET_SEG_DS(cpu)->x;
-      break;
-      case RM_BP_SI:
-      addr += cpu->regs[REG8086_BP].x + cpu->regs[REG8086_SI].x + GET_SEG_SS(cpu)->x;
-      break;
-      case RM_BP_DI:
-      addr += cpu->regs[REG8086_BP].x + cpu->regs[REG8086_DI].x + GET_SEG_SS(cpu)->x;
-      break;
-      case RM_SI:
-      addr += cpu->regs[REG8086_SI].x + GET_SEG_DS(cpu)->x;
-      break;
-      case RM_DI:
-      addr += cpu->regs[REG8086_DI].x + GET_SEG_DS(cpu)->x;
-      break;
-      case RM_BP:
-      addr += cpu->regs[REG8086_BP].x + GET_SEG_SS(cpu)->x;
-      break;
-      case RM_BX:
-      addr += cpu->regs[REG8086_BX].x + GET_SEG_DS(cpu)->x;
-      break;
-    }
-  }
+  *dst = get_modrm_reg(cpu, modrm, w_bit);
+  *src = get_modrm_rm(cpu, modrm, w_bit);
 
   if (d_bit) {
     void* tmp = *src;
@@ -521,12 +559,13 @@ int cycle_cpu8086(cpu8086_t* cpu) {
   cpu->e = E8086_OK;
   cpu->ip_cs = REGSEG_IP_CS(cpu);
   cpu->ip_add = 1;
-  cpu->i_ptr = mem->bytes + cpu->ip_cs;
   cpu->seg = REG8086_NULL;
+
+  uint8_t opcode = get8(cpu, cpu->ip_cs); /* opcode byte */
 
   /* TODO: Make multi-prefix support, since it's possible I think? */
   /* Prefixes */
-  switch (cpu->i_ptr[0]) {
+  switch (opcode) {
     case 0x26:
     cpu->seg = REG8086_ES;
     break;
@@ -543,57 +582,57 @@ int cycle_cpu8086(cpu8086_t* cpu) {
   if (cpu->seg != REG8086_NULL) {
     REGSEG_IP_CS_ADD(cpu, 1);
     cpu->ip_cs = REGSEG_IP_CS(cpu);
-    cpu->i_ptr = mem->bytes + cpu->ip_cs;
+    opcode = get8(cpu, cpu->ip_cs);
   }
 
   /* INC R16 */
-  if (cpu->i_ptr[0] >= 0x40 && cpu->i_ptr[0] <= 0x47) {
-    uint16_t* ptr = &cpu->regs[REG8086_AX + (cpu->i_ptr[0] & 7)].x;
+  if (opcode >= 0x40 && opcode <= 0x47) {
+    uint16_t* ptr = &cpu->regs[REG8086_AX + (opcode & 7)].x;
     *ptr = add_ins(cpu, *ptr, 1, 1);
     cpu->cycles += 2;
     cpu->ip_add = 1;
   }
   /* DEC R16 */
-  else if (cpu->i_ptr[0] >= 0x48 && cpu->i_ptr[0] <= 0x4F) {
-    uint16_t* ptr = &cpu->regs[REG8086_AX + (cpu->i_ptr[0] & 7)].x;
+  else if (opcode >= 0x48 && opcode <= 0x4F) {
+    uint16_t* ptr = &cpu->regs[REG8086_AX + (opcode & 7)].x;
     *ptr = sub_ins(cpu, *ptr, 1, 1);
     cpu->cycles += 2;
     cpu->ip_add = 1;
   }
   /* PUSH R16 */
-  else if (cpu->i_ptr[0] >= 0x50 && cpu->i_ptr[0] <= 0x57) {
-    push16(cpu, cpu->regs[REG8086_AX + (cpu->i_ptr[0] & 7)].x);
+  else if (opcode >= 0x50 && opcode <= 0x57) {
+    push16(cpu, cpu->regs[REG8086_AX + (opcode & 7)].x);
     cpu->cycles += 11;
     cpu->ip_add = 1;
   }
   /* POP R16 */
-  else if (cpu->i_ptr[0] >= 0x58 && cpu->i_ptr[0] <= 0x5F) {
-    cpu->regs[REG8086_AX + (cpu->i_ptr[0] & 7)].x = pop16(cpu);
+  else if (opcode >= 0x58 && opcode <= 0x5F) {
+    cpu->regs[REG8086_AX + (opcode & 7)].x = pop16(cpu);
     cpu->cycles += 8;
     cpu->ip_add = 1;
   }
   /* MOV R16, IMM16 */
-  else if (cpu->i_ptr[0] >= 0xB8 && cpu->i_ptr[0] <= 0xBF) {
-    cpu->regs[REG8086_AX + (cpu->i_ptr[0] & 7)].x = get16(cpu, cpu->ip_cs + 1);
+  else if (opcode >= 0xB8 && opcode <= 0xBF) {
+    cpu->regs[REG8086_AX + (opcode & 7)].x = get16(cpu, cpu->ip_cs + 1);
     
     cpu->cycles += 4;
     cpu->ip_add = 3;
   }
   /* MOV R8, IMM8 */
-  else if (cpu->i_ptr[0] >= 0xB0 && cpu->i_ptr[0] <= 0xB7) {
-    unsigned p_i = cpu->i_ptr[0] >= 0xB4; /* It's the upper register parts if the second half */
+  else if (opcode >= 0xB0 && opcode <= 0xB7) {
+    unsigned p_i = opcode >= 0xB4; /* It's the upper register parts if the second half */
 
     /* &3 for %4 because it's split to L and H */
-    cpu->regs[REG8086_AX + (cpu->i_ptr[0] & 3)].p[p_i] = get8(cpu, cpu->ip_cs + 1);
+    cpu->regs[REG8086_AX + (opcode & 3)].p[p_i] = get8(cpu, cpu->ip_cs + 1);
     
     cpu->cycles += 4;
     cpu->ip_add = 2;
   }
   /* Various conditional jumps, relative to current instruction. */
-  else if (cpu->i_ptr[0] >= 0x70 && cpu->i_ptr[0] <= 0x7F) {
+  else if (opcode >= 0x70 && opcode <= 0x7F) {
     uint8_t rel_addr = get8(cpu, cpu->ip_cs);
     
-    if (check_cond_jmp(cpu, cpu->i_ptr[0])) {
+    if (check_cond_jmp(cpu, opcode)) {
       short_jump(cpu, rel_addr);
       cpu->cycles += 16;
     }
@@ -602,9 +641,9 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     }
   }
   /* MOV AL/AX, ADDR or MOV ADDR, AL/AX. So much hard-wired stuff man. */
-  else if (cpu->i_ptr[0] >= 0xA0 && cpu->i_ptr[0] <= 0xA3) {
-    uint8_t d_bit = (cpu->i_ptr[0] & 0x2) >> 1;
-    uint8_t w_bit = cpu->i_ptr[0] & 0x1;
+  else if (opcode >= 0xA0 && opcode <= 0xA3) {
+    uint8_t d_bit = (opcode & 0x2) >> 1;
+    uint8_t w_bit = opcode & 0x1;
     uint16_t addr = get16(cpu, cpu->ip_cs + 1);
     void* ax_al = &cpu->regs[REG8086_AX]; /* Little-endian magic */
     /* XXX: I hate the way it looks. */
@@ -630,7 +669,7 @@ int cycle_cpu8086(cpu8086_t* cpu) {
   }
   /* UNKNOWN! */
   else {
-    if (cpu->i_ptr[0] == 0x66 || cpu->i_ptr[0] == 0x67) {
+    if (opcode == 0x66 || opcode == 0x67) {
       fputs("cycle_cpu8086(): you'll need i386 for that.", stderr);
     }
     cpu->cycles += 1;
