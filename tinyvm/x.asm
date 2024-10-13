@@ -1,3 +1,8 @@
-; that cs: would cause first byte to be 2e for PREFIX CS
-; mov ax, ADDR causes 0xA1 opcode...
-mov ax, cs:[0x6969]
+mov ax, 0x420
+mov cl, 0x69
+
+mov cl, ds:[0x1]
+
+mov bx, ax
+
+mov bh, ds:[0x1]

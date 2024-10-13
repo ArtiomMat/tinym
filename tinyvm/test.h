@@ -3,7 +3,6 @@
 #ifndef TEST_H
 #define TEST_H
 
-
 /* I can't be bothered to make a dynamic array, so init_test() allocates this many cells. */
 #define MAX_TESTS 64
 

@@ -118,6 +118,45 @@ static void test_cycling0(void) {
   free_mem(&mem);
 }
 
+static void test_modrm_888b(void) {
+  cpu8086_t cpu;
+  mem_t mem;
+  const uint8_t code[] = {
+    0xB8, 0x20, 0x04, /* MOV AX, 0x0420 */
+    0x89, 0xC3 /* MOV BX, AX */
+  };
+  
+
+  HOPE_THAT(
+    init_mem8086(&mem, 0),
+    "Memory initialized."
+  );
+
+  HOPE_THAT(
+    reset_cpu8086(&cpu, &mem),
+    "CPU initialized."
+  );
+  /* Force custom config on some registers for testing purposes */
+  cpu.regs[REG8086_CS].x = 0;
+  cpu.regs[REG8086_IP].x = 0;
+  cpu.regs[REG8086_BX].x = 0;
+  cpu.regs[REG8086_AX].x = 0;
+
+  memcpy(mem.bytes, code, sizeof (code));
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_AX].x == 0x420,
+    "MOV AX, 0x420 => AX=0x420"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_BX].x == 0x420,
+    "MOV BX, AX => BX=0x420"
+  );
+}
+
 /* Tests the mov instructions at 0xA0-0xA3 */
 static void test_a0a3_and_sreg_prefix(void) {
   cpu8086_t cpu;
@@ -310,4 +349,5 @@ void add_cpu8086_tests(void) {
   ADD_TEST(test_cycling0);
   ADD_TEST(test_a0a3_and_sreg_prefix);
   ADD_TEST(test_parity_table);
+  ADD_TEST(test_modrm_888b);
 }

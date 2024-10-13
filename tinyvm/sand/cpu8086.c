@@ -408,9 +408,9 @@ static int check_cond_jmp(cpu8086_t* cpu, uint8_t opcode) {
   * W_BIT indicates if it's a word operation, and hence the size of the data in the pointer.
   * Returns a pointer to the register referenced by the REG field.
 */
-static void* get_modrm_reg(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
+static void* get_modrm_reg(cpu8086_t* cpu, uint8_t modrm) {
   /* Since REG8086_* is compatible + Little-endain makes stuff easier. */
-  return &cpu->regs[(modrm & MODRM_REG_MASK) - REGW_AX].x;
+  return &cpu->regs[(modrm & MODRM_REG_MASK) >> 3].x;
 }
 
 /*
@@ -419,7 +419,7 @@ static void* get_modrm_reg(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
   * W_BIT indicates if it's a word operation, and hence the size of the data in the pointer.
   * Returns a pointer to the *SEGMENT REGISTER* referenced by the REG field.
 */
-static void* get_modrm_seg(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
+static void* get_modrm_seg(cpu8086_t* cpu, uint8_t modrm) {
   switch (modrm & MODRM_REG_MASK) {
     case SEG_ES:
     return &cpu->regs[REG8086_ES];
@@ -445,7 +445,8 @@ static void* get_modrm_rm(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
   /* R/M is REG, MOD=3 */
   if ((modrm & MODRM_MOD_MASK) == MOD_RM_IS_REG) {
     /* 3 bits right fit the REG mask */
-    rm = &cpu->regs[((modrm << 3) & MODRM_REG_MASK) - REGW_AX].x;
+    rm = &cpu->regs[(modrm << 3 & MODRM_REG_MASK) >> 3].x;
+    return rm;
   }
   /* Direct addressing, MOD=0,R/M=6 */
   else if ((modrm & MODRM_MOD_MASK) == MOD_NDISP && (modrm & MODRM_RM_MASK) == RM_BP) {
@@ -518,12 +519,12 @@ static void* get_modrm_rm(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
 
   * Returns if W bit was on, so you know if *SRC and *DST are uint16_t or uint8_t.
 */
-static int get_srcdst_0030(cpu8086_t* cpu, uint8_t opcode, void** dst, void** src) {
+static int get_dstsrc_0030(cpu8086_t* cpu, uint8_t opcode, void** dst, void** src) {
   /*
     In case we need to return copies/constants, that aren't easily referencable, like immidietes 
     that may be unaligned.
   */
-  static uint16_t s_src, s_dst;
+  static uint16_t s_src;
 
   uint8_t i_bits = (opcode & 0xFC) >> 2;
   uint8_t d_bit = (opcode & 0x2) >> 1;
@@ -541,8 +542,8 @@ static int get_srcdst_0030(cpu8086_t* cpu, uint8_t opcode, void** dst, void** sr
 
   modrm = get8(cpu, cpu->ip_cs + 1);
 
-  *dst = get_modrm_reg(cpu, modrm, w_bit);
-  *src = get_modrm_rm(cpu, modrm, w_bit);
+  *dst = get_modrm_rm(cpu, modrm, w_bit);
+  *src = get_modrm_reg(cpu, modrm);
 
   if (d_bit) {
     void* tmp = *src;
@@ -554,14 +555,14 @@ static int get_srcdst_0030(cpu8086_t* cpu, uint8_t opcode, void** dst, void** sr
 }
 
 int cycle_cpu8086(cpu8086_t* cpu) {
-  mem_t* mem = cpu->mem;
+  uint8_t opcode;
 
   cpu->e = E8086_OK;
   cpu->ip_cs = REGSEG_IP_CS(cpu);
   cpu->ip_add = 1;
   cpu->seg = REG8086_NULL;
 
-  uint8_t opcode = get8(cpu, cpu->ip_cs); /* opcode byte */
+  opcode = get8(cpu, cpu->ip_cs); /* opcode byte */
 
   /* TODO: Make multi-prefix support, since it's possible I think? */
   /* Prefixes */
@@ -627,6 +628,17 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     
     cpu->cycles += 4;
     cpu->ip_add = 2;
+  }
+  else if (opcode >= 0x88 && opcode <= 0x8B) {
+    void* dst;
+    void* src;
+    /* W_BIT=1? */
+    if (get_dstsrc_0030(cpu, opcode, &dst, &src)) {
+      *(uint16_t*)dst = *(uint16_t*)src;
+    }
+    else {
+      *(uint8_t*)dst = *(uint8_t*)src;
+    }
   }
   /* Various conditional jumps, relative to current instruction. */
   else if (opcode >= 0x70 && opcode <= 0x7F) {
