@@ -271,6 +271,50 @@ static void update_flags(cpu8086_t* cpu, const uint32_t result, const int w) {
   }
 }
 
+#if 0
+/*
+  Returns a converted uint16_t from p which may be uint16_t* if W, otherwise uint8_t*.
+*/
+static uint16_t u32_from_w(void* p, const int w) {
+  if (w) {
+    return *(uint16_t*)p;
+  }
+  return *(uint8_t*)p;
+}
+
+/* Does not add cycles because not enough info. */
+static void mov_ins(cpu8086_t* cpu, void* dst, const void* b, const int w) {
+  if (w) {
+    *(uint16_t*)dst = ins(cpu, *(uint16_t*)dst, *(uint16_t*)src, w);
+  }
+  else {
+    *(uint8_t*)dst = ins(cpu, *(uint8_t*)dst, *(uint8_t*)src, w);
+  }
+}
+#endif
+
+/*
+  Generalizes uint32_t *_ins() to take from *DST and *SRC uint16_t/uint8_t depending on W.
+  And stores the return value into *DST.
+*/
+#define UNSIGNED_INS(CPU, DST, SRC, W, INS)\
+  if (w) {\
+    *(uint16_t*)DST = INS(CPU, *(uint16_t*)DST, *(uint16_t*)SRC, W);\
+  }\
+  else {\
+    *(uint8_t*)DST = INS(CPU, *(uint8_t*)DST, *(uint8_t*)SRC, W);\
+  }
+/*
+  Same as UNSIGNED_INS() but for the void functions that don't actually modify *DST.
+*/
+#define VOID_INS(CPU, DST, SRC, W, INS)\
+  if (w) {\
+    INS(CPU, *(uint16_t*)DST, *(uint16_t*)SRC, W);\
+  }\
+  else {\
+    INS(CPU, *(uint8_t*)DST, *(uint8_t*)SRC, W);\
+  }
+
 /* Does not add cycles because not enough info. */
 static uint32_t add_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
   uint32_t result = a + b;
@@ -325,6 +369,7 @@ static void test_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const i
   uint32_t result = a & b;
   update_flags(cpu, result, w);
 }
+
 
 /*
   Note that REL_ADDR is signed.
@@ -629,6 +674,7 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     cpu->cycles += 4;
     cpu->ip_add = 2;
   }
+  /* MOV MODR/M */
   else if (opcode >= 0x88 && opcode <= 0x8B) {
     void* dst;
     void* src;
@@ -639,6 +685,13 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     else {
       *(uint8_t*)dst = *(uint8_t*)src;
     }
+  }
+  /* ADD MODR/M or ADD AL/AX, IMM8/16 */
+  else if (opcode >= 0x00 && opcode <= 0x05) {
+    void* dst;
+    void* src;
+    int w = get_dstsrc_0030(cpu, opcode, &dst, &src);
+    UNSIGNED_INS(cpu, dst, src, w, add_ins);
   }
   /* Various conditional jumps, relative to current instruction. */
   else if (opcode >= 0x70 && opcode <= 0x7F) {
