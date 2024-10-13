@@ -66,15 +66,9 @@ static void test_cycling0(void) {
     0xB4, 0x69 /* MOV AL, 0x69 */
   };
 
-  HOPE_THAT(
-    init_mem8086(&mem, 0),
-    "Memory initialized."
-  );
+  HOPE_THAT(init_mem8086(&mem, 0), "Memory initialized.");
+  HOPE_THAT(reset_cpu8086(&cpu, &mem), "CPU initialized.");
 
-  HOPE_THAT(
-    reset_cpu8086(&cpu, &mem),
-    "CPU initialized."
-  );
   /* Force custom config on some registers for testing purposes */
   cpu.regs[REG8086_CS].x = 0;
   cpu.regs[REG8086_SS].x = 0xF000;
@@ -127,15 +121,9 @@ static void test_modrm_888b(void) {
   };
   
 
-  HOPE_THAT(
-    init_mem8086(&mem, 0),
-    "Memory initialized."
-  );
+  HOPE_THAT(init_mem8086(&mem, 0), "Memory initialized.");
+  HOPE_THAT(reset_cpu8086(&cpu, &mem), "CPU initialized.");
 
-  HOPE_THAT(
-    reset_cpu8086(&cpu, &mem),
-    "CPU initialized."
-  );
   /* Force custom config on some registers for testing purposes */
   cpu.regs[REG8086_CS].x = 0;
   cpu.regs[REG8086_IP].x = 0;
@@ -171,15 +159,9 @@ static void test_a0a3_and_sreg_prefix(void) {
     0x3E, 0x5B /* DS:POP BX, correct one this time. */
   };
 
-  HOPE_THAT(
-    init_mem8086(&mem, 0),
-    "Memory initialized."
-  );
+  HOPE_THAT(init_mem8086(&mem, 0), "Memory initialized.");
+  HOPE_THAT(reset_cpu8086(&cpu, &mem), "CPU initialized.");
 
-  HOPE_THAT(
-    reset_cpu8086(&cpu, &mem),
-    "CPU initialized."
-  );
   /* Force custom config on some registers for testing purposes */
   cpu.regs[REG8086_SS].x = 0xF000;
   cpu.regs[REG8086_DS].x = 0xC000;
@@ -227,6 +209,98 @@ static void test_a0a3_and_sreg_prefix(void) {
   HOPE_THAT(
     cpu.regs[REG8086_BX].x == 0x4444,
     "Correct segment register used so BX should be 0x4444."
+  );
+}
+
+/* Tests various aspects of the dstsrc_0030 + conditional jumps */
+void test_dstsrc_0030_and_condjmp(void) {
+  cpu8086_t cpu;
+  mem_t mem;
+  /*
+      mov bx, 3
+      mov cx, cs:[1 + bx] ; CS=0xA000, final addr=0xA0004, 0x1234 is there.
+      mov si, 4
+      cmp cx, cs:[si]
+      jc _LOL
+      mov ax, 0x1 ; Should happen, cuz no carry
+      jz _LOL
+      mov ax, 0x69 ; Should not happen
+    _LOL:
+      mov ax, bx
+      xor ax, bx ; AX=0
+      add ax, cs:[1 + bx] ; Add 0x1234 to ax, to test add, AX=0x1234
+  */
+  uint8_t code[] = {
+    0xbb, 0x03, 0x00, 0x2e, 0x8b, 0x4f, 0x01, 0xbe, 0x04, 0x00, 0x2e, 0x3b,
+    0x0c, 0x72, 0x08, 0xb8, 0x01, 0x00, 0x74, 0x03, 0xb8, 0x69, 0x00, 0x89,
+    0xd8, 0x31, 0xd8, 0x2e, 0x03, 0x47, 0x01
+  };
+
+  HOPE_THAT(init_mem8086(&mem, 0), "Memory initialized.");
+  HOPE_THAT(reset_cpu8086(&cpu, &mem), "CPU initialized.");
+
+  /* Force custom config on some registers for testing purposes */
+  cpu.regs[REG8086_SS].x = 0xF000; /* No need but anyway. */
+  cpu.regs[REG8086_DS].x = 0xD000; /* To make sure prefixes work too. */
+  cpu.regs[REG8086_CS].x = 0xA000;
+  cpu.regs[REG8086_IP].x = 0x3000;
+  cpu.regs[REG8086_CX].x = 0x3000;
+  
+  mem.bytes[0xA0004] = 0x34;
+  mem.bytes[0xA0005] = 0x12;
+
+  /* Load code away from the 0x1234 */
+  memcpy(mem.bytes + 0xA3000, code, sizeof (code));
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_BX].x == 3,
+    "MOV BX, 3"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_CX].x == 0x1234,
+    "mov cx, cs:[1 + bx] => CX=0x1234 which is placed there."
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_SI].x == 4,
+    "mov si, 4."
+  );
+
+  cpu.regs[REG8086_F].x = 0; /* Just to confirm if it's actually set after the cycle. */
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_F].x & F8086_Z,
+    "cmp cx, cs:[si] => ZF=1"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_AX].x == 1,
+    "jc _LOL didn't happen"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error."); /* mov ax, bx */
+  HOPE_THAT(
+    cpu.regs[REG8086_AX].x == 3 && cpu.regs[REG8086_AX].x == cpu.regs[REG8086_BX].x,
+    "jz _LOL happened"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_AX].x == 0,
+    "xor ax, bx"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_AX].x == 0x1234,
+    "add ax, cs:[1 + bx]"
   );
 }
 
@@ -348,6 +422,7 @@ void add_cpu8086_tests(void) {
   ADD_TEST(test_update_flags);
   ADD_TEST(test_cycling0);
   ADD_TEST(test_a0a3_and_sreg_prefix);
+  ADD_TEST(test_dstsrc_0030_and_condjmp);
   ADD_TEST(test_parity_table);
   ADD_TEST(test_modrm_888b);
 }

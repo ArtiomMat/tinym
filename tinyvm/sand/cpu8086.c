@@ -234,7 +234,7 @@ static uint16_t pop16(cpu8086_t* cpu) {
   W is a boolean value and determines if it was a 16 bit operation(1) or 8 bit(0).
 */
 static void update_flags(cpu8086_t* cpu, const uint32_t result, const int w) {
-  cpu->regs[REG8086_F].x = F8086_I | F8086_D | F8086_T;
+  cpu->regs[REG8086_F].x &= F8086_I | F8086_D | F8086_T;
 
   if (!result) {
     cpu->regs[REG8086_F].x |= F8086_Z;
@@ -270,50 +270,6 @@ static void update_flags(cpu8086_t* cpu, const uint32_t result, const int w) {
     }
   }
 }
-
-#if 0
-/*
-  Returns a converted uint16_t from p which may be uint16_t* if W, otherwise uint8_t*.
-*/
-static uint16_t u32_from_w(void* p, const int w) {
-  if (w) {
-    return *(uint16_t*)p;
-  }
-  return *(uint8_t*)p;
-}
-
-/* Does not add cycles because not enough info. */
-static void mov_ins(cpu8086_t* cpu, void* dst, const void* b, const int w) {
-  if (w) {
-    *(uint16_t*)dst = ins(cpu, *(uint16_t*)dst, *(uint16_t*)src, w);
-  }
-  else {
-    *(uint8_t*)dst = ins(cpu, *(uint8_t*)dst, *(uint8_t*)src, w);
-  }
-}
-#endif
-
-/*
-  Generalizes uint32_t *_ins() to take from *DST and *SRC uint16_t/uint8_t depending on W.
-  And stores the return value into *DST.
-*/
-#define UNSIGNED_INS(CPU, DST, SRC, W, INS)\
-  if (w) {\
-    *(uint16_t*)DST = INS(CPU, *(uint16_t*)DST, *(uint16_t*)SRC, W);\
-  }\
-  else {\
-    *(uint8_t*)DST = INS(CPU, *(uint8_t*)DST, *(uint8_t*)SRC, W);\
-  }
-/*
-  Same as UNSIGNED_INS() but for the void functions that don't actually modify *DST.
-*/
-#define VOID_INS(CPU, DST, SRC, W, INS)\
-  if (w) {\
-    INS(CPU, *(uint16_t*)DST, *(uint16_t*)SRC, W);\
-  }\
-  else {\
-    INS(CPU, *(uint8_t*)DST, *(uint8_t*)SRC, W);\
-  }
 
 /* Does not add cycles because not enough info. */
 static uint32_t add_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
@@ -382,11 +338,11 @@ static void short_jump(cpu8086_t* cpu, int8_t rel_addr) {
     return;
   }
 
-  if (rel_addr < 0) {
+  if (rel_addr > 0) {
     REGSEG_IP_CS_ADD(cpu, rel_addr);
   }
   else {
-    REGSEG_IP_CS_SUB(cpu, rel_addr);
+    REGSEG_IP_CS_SUB(cpu, -rel_addr);
   }
 }
 
@@ -503,42 +459,41 @@ static void* get_modrm_rm(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
     /* Add the register stuff */
     switch (modrm & MODRM_RM_MASK) {
       case RM_BX_SI:
-      addr = cpu->regs[REG8086_BX].x + cpu->regs[REG8086_SI].x + GET_SEG_DS(cpu)->x;
+      addr = regseg_imm(cpu, cpu->regs[REG8086_BX].x + cpu->regs[REG8086_SI].x, GET_SEG_DS(cpu)->x);
       break;
       case RM_BX_DI:
-      addr = cpu->regs[REG8086_BX].x + cpu->regs[REG8086_DI].x + GET_SEG_DS(cpu)->x;
+      addr = regseg_imm(cpu, cpu->regs[REG8086_BX].x + cpu->regs[REG8086_DI].x, GET_SEG_DS(cpu)->x);
       break;
       case RM_BP_SI:
-      addr = cpu->regs[REG8086_BP].x + cpu->regs[REG8086_SI].x + GET_SEG_SS(cpu)->x;
+      addr = regseg_imm(cpu, cpu->regs[REG8086_BP].x + cpu->regs[REG8086_SI].x, GET_SEG_SS(cpu)->x);
       break;
       case RM_BP_DI:
-      addr = cpu->regs[REG8086_BP].x + cpu->regs[REG8086_DI].x + GET_SEG_SS(cpu)->x;
+      addr = regseg_imm(cpu, cpu->regs[REG8086_BP].x + cpu->regs[REG8086_DI].x, GET_SEG_SS(cpu)->x);
       break;
       case RM_SI:
-      addr = cpu->regs[REG8086_SI].x + GET_SEG_DS(cpu)->x;
+      addr = regseg_imm(cpu, cpu->regs[REG8086_SI].x, GET_SEG_DS(cpu)->x);
       break;
       case RM_DI:
-      addr = cpu->regs[REG8086_DI].x + GET_SEG_DS(cpu)->x;
+      addr = regseg_imm(cpu, cpu->regs[REG8086_DI].x, GET_SEG_DS(cpu)->x);
       break;
       case RM_BP:
-      addr = cpu->regs[REG8086_BP].x + GET_SEG_SS(cpu)->x;
+      addr = regseg_imm(cpu, cpu->regs[REG8086_BP].x, GET_SEG_SS(cpu)->x);
       break;
       case RM_BX:
-      addr = cpu->regs[REG8086_BX].x + GET_SEG_DS(cpu)->x;
+      addr = regseg_imm(cpu, cpu->regs[REG8086_BX].x, GET_SEG_DS(cpu)->x);
       break;
     }
     /* Add displacement */
     switch (modrm & MODRM_MOD_MASK) {
-      case MOD_NDISP:
+      case MOD_DISP16:
       addr += get16(cpu, cpu->ip_cs + 2);
       break;
 
       case MOD_DISP8:
       addr += get8(cpu, cpu->ip_cs + 2);
       break;
-
-      case MOD_DISP16:
-      addr += 0;
+      
+      default:
       break;
     }
   }
@@ -589,6 +544,8 @@ static void* get_modrm_rm(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
   * *SRC is the source(copied/utilized/constant) operand.
   * *DST is (usually, but sometimes theoretically) modified operand.
   * OPCODE is the opcode byte.
+  
+  * Sets CPU->ip_add automaically.
 
   * Returns if W bit was on, so you know if *SRC and *DST are uint16_t or uint8_t.
 */
@@ -604,8 +561,9 @@ static int get_dstsrc_0030(cpu8086_t* cpu, uint8_t opcode, void** dst, void** sr
   uint8_t w_bit = opcode & 0x1;
   uint8_t modrm;
   
+
   /* If 3rd bit on it's the INS AL/AX, IMM8/IMM16 thingy, works for both 0x04/5 and 0x0C/D. */
-  if (i_bits & 0x4) {
+  if (i_bits & 0x1) {
     s_src = w_bit ? get16(cpu, cpu->ip_cs + 1) : get8(cpu, cpu->ip_cs + 1);
     *dst = &cpu->regs[REG8086_AX].x; /* &p[0] is &x so no checks. Little-endian rules. */
     *src = &s_src;
@@ -622,6 +580,30 @@ static int get_dstsrc_0030(cpu8086_t* cpu, uint8_t opcode, void** dst, void** sr
     void* tmp = *src;
     *src = *dst;
     *dst = tmp;
+  }
+
+  /* CPU->ip_add */
+  switch (modrm & MODRM_MOD_MASK) {
+    case MOD_DISP16:
+    cpu->ip_add = 4;
+    break;
+    case MOD_DISP8:
+    cpu->ip_add = 3;
+    break;
+
+    case MOD_NDISP:
+    /* Direct addressing mode */
+    if ((modrm & MODRM_RM_MASK) == RM_BP) {
+      cpu->ip_add = 4;
+    }
+    else {
+      cpu->ip_add = 2;
+    }
+    break;
+
+    default:
+    cpu->ip_add = 2;
+    break;
   }
 
   return w_bit;
@@ -716,7 +698,7 @@ int cycle_cpu8086(cpu8086_t* cpu) {
   }
   /* ??? MODR/M or ??? AL/AX, IMM8/16 section */
   /* ADD */
-  else if (opcode >= 0x00 && opcode <= 0x05) {
+  else if (/* opcode >= 0x00 && */ opcode <= 0x05) {
     UNSIGNED_INS_DSTSRC_0030(cpu, opcode, add_ins);
   }
   /* OR */
@@ -749,7 +731,7 @@ int cycle_cpu8086(cpu8086_t* cpu) {
   }
   /* Various conditional jumps, relative to current instruction. */
   else if (opcode >= 0x70 && opcode <= 0x7F) {
-    uint8_t rel_addr = get8(cpu, cpu->ip_cs);
+    uint8_t rel_addr = get8(cpu, cpu->ip_cs + 1);
     
     if (check_cond_jmp(cpu, opcode)) {
       short_jump(cpu, rel_addr);
@@ -758,6 +740,7 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     else {
       cpu->cycles += 4;
     }
+    cpu->ip_add = 2;
   }
   /* MOV AL/AX, ADDR or MOV ADDR, AL/AX. So much hard-wired stuff man. */
   else if (opcode >= 0xA0 && opcode <= 0xA3) {
