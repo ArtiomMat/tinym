@@ -361,7 +361,7 @@ static uint32_t xor_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, cons
 }
 /* Only affects flags. Does not add cycles because not enough info. */
 static void cmp_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
-  uint32_t result = a ^ b;
+  uint32_t result = a - b;
   update_flags(cpu, result, w);
 }
 /* Only affects flags. Does not add cycles because not enough info. */
@@ -552,7 +552,35 @@ static void* get_modrm_rm(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
 
   return rm;
 }
-
+/*
+  Generalizes uint32_t *_ins() to take from *DST and *SRC uint16_t/uint8_t depending on W.
+  And stores the return value into *DST. This is done to avoid too much boilerplate.
+*/
+#define UNSIGNED_INS_DSTSRC_0030(CPU, OPCODE, INS)\
+  {\
+    void* _dst_, *_src_;\
+    int _w_bit_ = get_dstsrc_0030(CPU, OPCODE, &_dst_, &_src_);\
+    if (_w_bit_) {\
+      *(uint16_t*)_dst_ = INS(CPU, *(uint16_t*)_dst_, *(uint16_t*)_src_, _w_bit_);\
+    }\
+    else {\
+      *(uint8_t*)_dst_ = INS(CPU, *(uint8_t*)_dst_, *(uint8_t*)_src_, _w_bit_);\
+    }\
+  }
+/*
+  Same as UNSIGNED_INS_DSTSRC_0030() but for the void functions that don't actually modify *DST.
+*/
+#define VOID_INS_DSTSRC_0030(CPU, OPCODE, INS)\
+  {\
+    void* _dst_, *_src_;\
+    int _w_bit_ = get_dstsrc_0030(CPU, OPCODE, &_dst_, &_src_);\
+    if (_w_bit_) {\
+      INS(CPU, *(uint16_t*)_dst_, *(uint16_t*)_src_, _w_bit_);\
+    }\
+    else {\
+      INS(CPU, *(uint8_t*)_dst_, *(uint8_t*)_src_, _w_bit_);\
+    }\
+  }
 /*
   * A specific format of instructions that appear in 0x00-0x30, like ADD in the start, or CMP in the end, they are distinct and can be generalized to this source-destination retrieval.
   * It's also applicable to MOV in 0x88-0x8B, even through it doesn't have the AL-AX thingy, due 
@@ -686,12 +714,38 @@ int cycle_cpu8086(cpu8086_t* cpu) {
       *(uint8_t*)dst = *(uint8_t*)src;
     }
   }
-  /* ADD MODR/M or ADD AL/AX, IMM8/16 */
+  /* ??? MODR/M or ??? AL/AX, IMM8/16 section */
+  /* ADD */
   else if (opcode >= 0x00 && opcode <= 0x05) {
-    void* dst;
-    void* src;
-    int w = get_dstsrc_0030(cpu, opcode, &dst, &src);
-    UNSIGNED_INS(cpu, dst, src, w, add_ins);
+    UNSIGNED_INS_DSTSRC_0030(cpu, opcode, add_ins);
+  }
+  /* OR */
+  else if (opcode >= 0x08 && opcode <= 0x0D) {
+    UNSIGNED_INS_DSTSRC_0030(cpu, opcode, or_ins);
+  }
+  /* ADC */
+  else if (opcode >= 0x10 && opcode <= 0x15) {
+    UNSIGNED_INS_DSTSRC_0030(cpu, opcode, adc_ins);
+  }
+  /* SBB */
+  else if (opcode >= 0x18 && opcode <= 0x1D) {
+    UNSIGNED_INS_DSTSRC_0030(cpu, opcode, sbb_ins);
+  }
+  /* AND */
+  else if (opcode >= 0x20 && opcode <= 0x25) {
+    UNSIGNED_INS_DSTSRC_0030(cpu, opcode, and_ins);
+  }
+  /* SUB */
+  else if (opcode >= 0x28 && opcode <= 0x2D) {
+    UNSIGNED_INS_DSTSRC_0030(cpu, opcode, sub_ins);
+  }
+  /* XOR */
+  else if (opcode >= 0x30 && opcode <= 0x35) {
+    UNSIGNED_INS_DSTSRC_0030(cpu, opcode, xor_ins);
+  }
+  /* CMP */
+  else if (opcode >= 0x38 && opcode <= 0x3D) {
+    VOID_INS_DSTSRC_0030(cpu, opcode, cmp_ins);
   }
   /* Various conditional jumps, relative to current instruction. */
   else if (opcode >= 0x70 && opcode <= 0x7F) {
