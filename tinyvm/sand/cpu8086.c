@@ -329,11 +329,10 @@ static void test_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const i
 
 /*
   Note that REL_ADDR is signed.
-  IP_CS must be REGSEG_IP_CS(CPU).
   May set CPU->e to E8086_ACCESS_VIOLATION in the case where REL_ADDR over/underflows.
 */
 static void short_jump(cpu8086_t* cpu, int8_t rel_addr) {
-  if (rel_addr + REGSEG_IP_CS(cpu) >= MB1) {
+  if (rel_addr + cpu->ip_cs >= MB1) {
     cpu->e = E8086_ACCESS_VIOLATION;
     return;
   }
@@ -344,6 +343,22 @@ static void short_jump(cpu8086_t* cpu, int8_t rel_addr) {
   else {
     REGSEG_IP_CS_SUB(cpu, -rel_addr);
   }
+}
+
+/*
+  May set CPU->e to E8086_ACCESS_VIOLATION in the case where CS:IP over/underflows.
+  Let it set CPU->ip_add itself!
+*/
+static void far_jump(cpu8086_t* cpu, uint16_t ip, uint16_t cs) {
+  if (ip + cs >= MB1) {
+    cpu->e = E8086_ACCESS_VIOLATION;
+    cpu->ip_add = 1; /* To not be stuck in a loop */
+    return;
+  }
+
+  cpu->regs[REG8086_IP].x = ip;
+  cpu->regs[REG8086_CS].x = cs;
+  cpu->ip_add = 0;
 }
 
 /*
@@ -403,21 +418,28 @@ static int check_cond_jmp(cpu8086_t* cpu, uint8_t opcode) {
   return do_jump;
 }
 
+
+
 /*
   * CPU->ip_cs is expected to be at the first byte, not modrm.
   * MODRM is the modr/m byte.
   * W_BIT indicates if it's a word operation, and hence the size of the data in the pointer.
   * Returns a pointer to the register referenced by the REG field.
 */
-static void* get_modrm_reg(cpu8086_t* cpu, uint8_t modrm) {
-  /* Since REG8086_* is compatible + Little-endain makes stuff easier. */
-  return &cpu->regs[(modrm & MODRM_REG_MASK) >> 3].x;
+static void* get_modrm_reg(cpu8086_t* cpu, uint8_t modrm, int w_bit) {
+  unsigned reg = (modrm & MODRM_REG_MASK) >> 3;
+  if (w_bit) {
+    return &cpu->regs[reg].x;
+  }
+  else {
+    unsigned p_i = reg >= 0x4;
+    return &cpu->regs[REG8086_AX + (reg & 3)].p[p_i];
+  }
 }
 
 /*
   * CPU->ip_cs is expected to be at the first byte, not modrm.
   * MODRM is the modr/m byte.
-  * W_BIT indicates if it's a word operation, and hence the size of the data in the pointer.
   * Returns a pointer to the *SEGMENT REGISTER* referenced by the REG field.
 */
 static void* get_modrm_seg(cpu8086_t* cpu, uint8_t modrm) {
@@ -434,7 +456,7 @@ static void* get_modrm_seg(cpu8086_t* cpu, uint8_t modrm) {
 }
 
 /*
-  * CPU->ip_cs is expected to be at the first byte, not modrm.
+  * SAFE 1MB ACCESS. CPU->ip_cs is expected to be at the first byte, not modrm.
   * MODRM is the modr/m byte.
   * W_BIT indicates if it's a word operation, and hence the size of the data in the pointer.
   * Returns a pointer to what the R/M points to, e.g address in CPU->mem, or a register.
@@ -443,10 +465,9 @@ static void* get_modrm_rm(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
   void* rm;
   uint32_t addr;
 
-  /* R/M is REG, MOD=3 */
+  /* R/M is REG, MOD=3, so just shift by 3 to put RM in REG and return. */
   if ((modrm & MODRM_MOD_MASK) == MOD_RM_IS_REG) {
-    /* 3 bits right fit the REG mask */
-    rm = &cpu->regs[(modrm << 3 & MODRM_REG_MASK) >> 3].x;
+    rm = get_modrm_reg(cpu, modrm << 3, w_bit);
     return rm;
   }
   /* Direct addressing, MOD=0,R/M=6 */
@@ -507,6 +528,32 @@ static void* get_modrm_rm(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
 
   return rm;
 }
+
+static uint8_t get_modrm_ip_add(cpu8086_t* cpu, uint8_t modrm) {
+  switch (modrm & MODRM_MOD_MASK) {
+    case MOD_DISP16:
+    return 4;
+    break;
+    case MOD_DISP8:
+    return 3;
+    break;
+
+    case MOD_NDISP:
+    /* Direct addressing mode */
+    if ((modrm & MODRM_RM_MASK) == RM_BP) {
+      return 4;
+    }
+    else {
+      return 2;
+    }
+    break;
+
+    default:
+    return 2;
+    break;
+  }
+}
+
 /*
   Generalizes uint32_t *_ins() to take from *DST and *SRC uint16_t/uint8_t depending on W.
   And stores the return value into *DST. This is done to avoid too much boilerplate.
@@ -574,7 +621,7 @@ static int get_dstsrc_0030(cpu8086_t* cpu, uint8_t opcode, void** dst, void** sr
   modrm = get8(cpu, cpu->ip_cs + 1);
 
   *dst = get_modrm_rm(cpu, modrm, w_bit);
-  *src = get_modrm_reg(cpu, modrm);
+  *src = get_modrm_reg(cpu, modrm, w_bit);
 
   if (d_bit) {
     void* tmp = *src;
@@ -583,28 +630,7 @@ static int get_dstsrc_0030(cpu8086_t* cpu, uint8_t opcode, void** dst, void** sr
   }
 
   /* CPU->ip_add */
-  switch (modrm & MODRM_MOD_MASK) {
-    case MOD_DISP16:
-    cpu->ip_add = 4;
-    break;
-    case MOD_DISP8:
-    cpu->ip_add = 3;
-    break;
-
-    case MOD_NDISP:
-    /* Direct addressing mode */
-    if ((modrm & MODRM_RM_MASK) == RM_BP) {
-      cpu->ip_add = 4;
-    }
-    else {
-      cpu->ip_add = 2;
-    }
-    break;
-
-    default:
-    cpu->ip_add = 2;
-    break;
-  }
+  cpu->ip_add = get_modrm_ip_add(cpu, modrm);
 
   return w_bit;
 }
@@ -699,6 +725,7 @@ int cycle_cpu8086(cpu8086_t* cpu) {
   /* ??? MODR/M or ??? AL/AX, IMM8/16 section */
   /* ADD */
   else if (/* opcode >= 0x00 && */ opcode <= 0x05) {
+    /* TODO: Best way to add cycles is to estimate them, maybe add cpu->cyclef, which is flags for what kind of stuff happened, and try to estimate them, better than 0 cycles added, or literally make 10000 branches for this type of OP lol. */
     UNSIGNED_INS_DSTSRC_0030(cpu, opcode, add_ins);
   }
   /* OR */
@@ -768,6 +795,68 @@ int cycle_cpu8086(cpu8086_t* cpu) {
 
     cpu->ip_add = 3;
     cpu->cycles += 10;
+  }
+  /* MOV MOD/RM for sregs */
+  else if (opcode == 0x8C || opcode == 0x8E) {
+    int d_bit = (opcode & 0x2) ? 1 : 0;
+    uint8_t modrm = get8(cpu, cpu->ip_cs + 1);
+    uint16_t* dst = get_modrm_rm(cpu, modrm, 1);
+    uint16_t* src = get_modrm_seg(cpu, modrm);
+    if (d_bit) {
+      uint16_t* tmp = src;
+      src = dst;
+      dst = tmp;
+    }
+    *dst = *src;
+
+    cpu->ip_add = get_modrm_ip_add(cpu, modrm);
+  }
+  /* CALL/JMP IMM16/IMM16, CALL just pushes to stack so... */
+  else if (opcode == 0xE8 || opcode == 0xE9) {
+    if (opcode == 0xE8) {
+      push16(cpu, cpu->regs[REG8086_IP].x + 3); /* +3 for this instruction. */
+    }
+    cpu->regs[REG8086_IP].x = get16(cpu, cpu->ip_cs + 1);
+    cpu->ip_add = 0; /* ADD BAD! */
+  }
+  /* JMP FAR IMM16 */
+  else if (opcode == 0xEA) {
+    uint16_t ip = get16(cpu, cpu->ip_cs + 1);
+    uint16_t cs = get16(cpu, cpu->ip_cs + 3);
+    far_jump(cpu, ip, cs); /* Sets ip_add itself. */
+  }
+  /* JMP IMM8 */
+  else if (opcode == 0xEB) {
+    short_jump(cpu, get8(cpu, cpu->ip_cs + 1));
+    cpu->ip_add = 0; /* ADD BAD! */
+  }
+  /* RET IMM16 */
+  else if (opcode == 0xC2) {
+    uint16_t extra = get16(cpu, cpu->ip_cs + 1);
+    cpu->regs[REG8086_IP].x = pop16(cpu);
+    /* Extra popping */
+    regseg_add(&cpu->regs[REG8086_SP], GET_SEG_SS(cpu), extra);
+    cpu->ip_add = 0; /* ADD BAD! */
+  }
+  /* RET */
+  else if (opcode == 0xC3) {
+    cpu->regs[REG8086_IP].x = pop16(cpu);
+    cpu->ip_add = 0; /* ADD BAD! */
+  }
+  /* RET FAR IMM16 */
+  else if (opcode == 0xCA) {
+    uint16_t extra = get16(cpu, cpu->ip_cs + 1);
+    cpu->regs[REG8086_CS].x = pop16(cpu);
+    cpu->regs[REG8086_IP].x = pop16(cpu);
+    /* Extra popping */
+    regseg_add(&cpu->regs[REG8086_SP], GET_SEG_SS(cpu), extra);
+    cpu->ip_add = 0; /* ADD BAD! */
+  }
+  /* RET FAR */
+  else if (opcode == 0xCB) {
+    cpu->regs[REG8086_CS].x = pop16(cpu);
+    cpu->regs[REG8086_IP].x = pop16(cpu);
+    cpu->ip_add = 0; /* ADD BAD! */
   }
   /* UNKNOWN! */
   else {

@@ -65,7 +65,7 @@ void run_tests(void) {
     tests[test_i].t();
     puts("SUCCESS.");
   }
-  puts("\nSUCCEEDED in all tests.\n");
+  printf("\nSUCCEEDED in all %hu tests.\n\n", tests_n);
 
   signal(SIGSEGV, prev_sigsegv_handler);
 }

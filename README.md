@@ -15,6 +15,10 @@ The VM might be innacurate, simulating things incorrectly while appearing to giv
 due to my ignorance or just me not getting the opportunity to learn an aspect of the CPU.
 I tried/trying my best to make the logical part of things as true to the OG, but also as optimized
 as possible.
+## Current non standards(DEFINATELY FEATURES AND NOT LAZINESS)
+* Segment prefixes work for everything, even `CALL` and `JMP`, so you can replace `CS` sreg with `DS` for example in some cases.
+* Some errors like 1MB access violation are fatal and pretty much UB(UB that is safe to the host machine), but not in the OG 8086.
+* Cycles, cycle counting needs to be worked on, and timing.
 
 # Project structure
 

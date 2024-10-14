@@ -213,7 +213,7 @@ static void test_a0a3_and_sreg_prefix(void) {
 }
 
 /* Tests various aspects of the dstsrc_0030 + conditional jumps */
-void test_dstsrc_0030_and_condjmp(void) {
+static void test_dstsrc_0030_and_condjmp(void) {
   cpu8086_t cpu;
   mem_t mem;
   /*
@@ -304,8 +304,72 @@ void test_dstsrc_0030_and_condjmp(void) {
   );
 }
 
+/* Test moving into segment registers and out, and also if byte modrm works */
+static void test_sreg_mov_and_modrmb(void) {
+  cpu8086_t cpu;
+  mem_t mem;
+  /*
+    mov bl, 0x12
+    mov ch, 0x34,
+    mov dh, bl
+    mov dl, ch ; ax=0x1234
+    mov es, dx
+    mov ds:[2], es
+  */
+  uint8_t code[] = {
+    0xb3, 0x12, 0xb5, 0x34, 0x88, 0xde, 0x88, 0xea, 0x8e, 0xc2, 0x3e, 0x8c,
+    0x06, 0x02, 0x00
+  };
+
+  HOPE_THAT(init_mem8086(&mem, 0), "Memory initialized.");
+  HOPE_THAT(reset_cpu8086(&cpu, &mem), "CPU initialized.");
+
+  /* Force custom config on some registers for testing purposes */
+  cpu.regs[REG8086_SS].x = 0xF000;
+  cpu.regs[REG8086_DS].x = 0xD000;
+  cpu.regs[REG8086_CS].x = 0xA000;
+  cpu.regs[REG8086_IP].x = 0x3000;
+  cpu.regs[REG8086_CX].x = 0x3000;
+  
+  mem.bytes[0xD0002] = 0x78;
+  mem.bytes[0xD0003] = 0x56;
+
+  memcpy(mem.bytes + 0xA3000, code, sizeof (code));
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_BX].p[0] == 0x12,
+    "mov bl, 0x12"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_CX].p[1] == 0x34,
+    "mov ch, 0x12"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_DX].x == 0x1234,
+    "mov dh, bl + mov dl, ch"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_ES].x == 0x1234,
+    "mov es, dx"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    mem.bytes[0xD0002] == 0x34 && mem.bytes[0xD0003] == 0x12,
+    "mov ds:[2], es"
+  );
+}
+
 /* Tests update_flags() and its related *_ins() functions. */
-void test_update_flags(void) {
+static void test_update_flags(void) {
   cpu8086_t cpu;
   uint16_t* fptr = &cpu.regs[REG8086_F].x;
   *fptr = 0;
@@ -385,7 +449,7 @@ void test_update_flags(void) {
   );
 }
 
-void test_parity_table(void) {
+static void test_parity_table(void) {
   HOPE_THAT(
     get_arr_bit(parity_table, 0) == 1,
     "parity=1 for 0."
@@ -419,10 +483,11 @@ void test_parity_table(void) {
 void add_cpu8086_tests(void) {
   add_mem_tests(); /* cpu8086_t depends on proper mem_t function. */
   ADD_TEST(test_regseg);
+  ADD_TEST(test_parity_table);
   ADD_TEST(test_update_flags);
   ADD_TEST(test_cycling0);
   ADD_TEST(test_a0a3_and_sreg_prefix);
   ADD_TEST(test_dstsrc_0030_and_condjmp);
-  ADD_TEST(test_parity_table);
+  ADD_TEST(test_sreg_mov_and_modrmb);
   ADD_TEST(test_modrm_888b);
 }
