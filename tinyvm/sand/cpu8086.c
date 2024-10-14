@@ -340,6 +340,7 @@ static void test_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const i
 /*
   Note that REL_ADDR is signed.
   May set CPU->e to E8086_ACCESS_VIOLATION in the case where REL_ADDR over/underflows.
+  You still need to increment for JMP and conditional jumps CPU->ip_add, because short jumps only take into account distance from NEXT instruction.
 */
 static void short_jump(cpu8086_t* cpu, int8_t rel_addr) {
   if (rel_addr + cpu->ip_cs >= MB1) {
@@ -890,12 +891,12 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     if (opcode == 0x9A) {
       /* These are what is pushed */
       reg8086_t ip2, cs2;
-      ip2.x = ip;
-      cs2.x = cs;
-      regseg_add(&ip2, &cs2, 4);
+      ip2 = cpu->regs[REG8086_IP];
+      cs2 = cpu->regs[REG8086_CS];
+      regseg_add(&ip2, &cs2, 5);
 
-      push16(cpu, ip);
-      push16(cpu, cs);
+      push16(cpu, ip2.x);
+      push16(cpu, cs2.x);
     }
 
     far_jump(cpu, ip, cs); /* Sets ip_add itself. */
@@ -903,7 +904,7 @@ int cycle_cpu8086(cpu8086_t* cpu) {
   /* JMP IMM8 */
   else if (opcode == 0xEB) {
     short_jump(cpu, get8(cpu, cpu->ip_cs + 1));
-    cpu->ip_add = 0; /* ADD BAD! */
+    cpu->ip_add = 2; /* Since it's from the next instruction */
   }
   /* RET IMM16 */
   else if (opcode == 0xC2) {

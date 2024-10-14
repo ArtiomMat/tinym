@@ -153,7 +153,7 @@ static void test_mov_rm_imm(void) {
     mov byte ds:[4], 0x34
     mov word es:[6], 0x1234
   */
-  uint8_t code[] = {
+  const uint8_t code[] = {
     0x3e, 0xc6, 0x06, 0x03, 0x00, 0x12, 0x3e, 0xc6, 0x06, 0x04, 0x00, 0x34,
     0x26, 0xc7, 0x06, 0x06, 0x00, 0x34, 0x12
   };
@@ -274,7 +274,7 @@ static void test_dstsrc_0030_and_condjmp(void) {
       xor ax, bx ; AX=0
       add ax, cs:[1 + bx] ; Add 0x1234 to ax, to test add, AX=0x1234
   */
-  uint8_t code[] = {
+  const uint8_t code[] = {
     0xbb, 0x03, 0x00, 0x2e, 0x8b, 0x4f, 0x01, 0xbe, 0x04, 0x00, 0x2e, 0x3b,
     0x0c, 0x72, 0x08, 0xb8, 0x01, 0x00, 0x74, 0x03, 0xb8, 0x69, 0x00, 0x89,
     0xd8, 0x31, 0xd8, 0x2e, 0x03, 0x47, 0x01
@@ -360,7 +360,7 @@ static void test_sreg_mov_and_modrmb(void) {
     mov es, dx
     mov ds:[2], es
   */
-  uint8_t code[] = {
+  const uint8_t code[] = {
     0xb3, 0x12, 0xb5, 0x34, 0x88, 0xde, 0x88, 0xea, 0x8e, 0xc2, 0x3e, 0x8c,
     0x06, 0x02, 0x00
   };
@@ -409,6 +409,112 @@ static void test_sreg_mov_and_modrmb(void) {
   HOPE_THAT(
     mem.bytes[0xD0002] == 0x34 && mem.bytes[0xD0003] == 0x12,
     "mov ds:[2], es"
+  );
+}
+
+/* Tests intersegment calls and rets. */
+static void test_call_ret_far(void) {
+  cpu8086_t cpu;
+  mem_t mem;
+  /*
+    mov ax, 0xA
+    call 0xC000:0x1234
+    mov ax, 0xA1
+    call 0xB000:0x0003
+    mov ax, 0xA2
+  */
+  const uint8_t a0001[] = {
+    0xb8, 0x0a, 0x00, 0x9a, 0x34, 0x12, 0x00, 0xc0, 0xb8, 0xa1, 0x00, 0x9a,
+    0x03, 0x00, 0x00, 0xb0, 0xb8, 0xa2, 0x00
+  };
+  /*
+    mov ax, 0xB
+    call 0xC000:0x1234 ; Call again to check nested calls
+    jmp _LOL
+    mov ax, 0xB1 ; Should be skipped
+    _LOL:
+    retf ; RET FAR in nasm apparently?
+  */
+  const uint8_t b0003[] = {
+    0xb8, 0x0b, 0x00, 0x9a, 0x34, 0x12, 0x00, 0xc0, 0xeb, 0x03, 0xb8, 0xb1,
+    0x00, 0xcb
+  };
+  /*
+    mov ax, 0xC
+    retf
+  */
+  const uint8_t c1234[] = {
+    0xb8, 0x0c, 0x00, 0xcb
+  };
+
+  HOPE_THAT(init_mem8086(&mem, 0), "Memory initialized.");
+  HOPE_THAT(reset_cpu8086(&cpu, &mem), "CPU initialized.");
+
+  /* Force custom config on some registers for testing purposes */
+  cpu.regs[REG8086_CS].x = 0;
+  cpu.regs[REG8086_SS].x = 0xF000;
+  cpu.regs[REG8086_SP].x = 0xE000;
+  cpu.regs[REG8086_CS].x = 0xA000;
+  cpu.regs[REG8086_IP].x = 0x1;
+
+  memcpy(mem.bytes + 0xa0001, a0001, sizeof (a0001));
+  memcpy(mem.bytes + 0xb0003, b0003, sizeof (b0003));
+  memcpy(mem.bytes + 0xc1234, c1234, sizeof (c1234));
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_AX].x == 0xA,
+    "mov ax, 0xA"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error."); /* call far */
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_AX].x == 0xC,
+    "mov ax, 0xC"
+  );
+  
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error."); /* ret far */
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_AX].x == 0xA1,
+    "mov ax, 0xA1"
+  );
+  HOPE_THAT(
+    cpu.regs[REG8086_SP].x == 0xE000 && cpu.regs[REG8086_SS].x == 0xF000,
+    "Stack is correct after calls and rets"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error."); /* call far */
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_AX].x == 0xB,
+    "mov ax, 0xB"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error."); /* call far from 0xb0003 */
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_AX].x == 0xC,
+    "mov ax, 0xC"
+  );
+  
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error."); /* retf */
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error."); /* jmp over mov ax, 0xB1 */
+  HOPE_THAT(
+    cpu.regs[REG8086_AX].x == 0xC,
+    "ax still 0xC"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error."); /* retf */
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_AX].x == 0xA2,
+    "mov ax, 0xA2"
+  );
+  HOPE_THAT(
+    cpu.regs[REG8086_SP].x == 0xE000 && cpu.regs[REG8086_SS].x == 0xF000,
+    "Stack is correct after calls and rets"
   );
 }
 
@@ -537,4 +643,5 @@ void add_cpu8086_tests(void) {
   ADD_TEST(test_sreg_mov_and_modrmb);
   ADD_TEST(test_modrm_888b);
   ADD_TEST(test_mov_rm_imm);
+  ADD_TEST(test_call_ret_far);
 }
