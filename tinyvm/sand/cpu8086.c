@@ -45,11 +45,10 @@ int reset_cpu8086(cpu8086_t* cpu, mem_t* mem) {
   return 1;
 }
 
-
-/*
-  Returns the sreg, if CPU->seg has been specified(mainly via prefixes), that will be used as 
-  override, otherwise the default, DEFS is the default REG8086_* that should be used.
-*/
+/**
+ * Returns a segment register pointer from CPU, and takes segment prefixes into account via CPU->seg.
+ * DEFS must be REG8086_*, it's the default segment regregister returned, unless CPU->seg was set due to prefixing.
+ */
 static reg8086_t* get_seg(cpu8086_t* cpu, const int defs) {
   if (cpu->seg != REG8086_NULL) {
     return cpu->regs + cpu->seg;
@@ -72,7 +71,7 @@ static uint32_t regseg_imm(cpu8086_t* cpu, const uint16_t reg, const uint16_t se
 }
 /*
   SAFE 1MB ACCESS.
-  Equivalent of regseg_imm but for actual regs. REG and SEG are the REG8086_* enum.
+  Equivalent of regseg_imm() but for actual regs. REG and SEG are the REG8086_* enum.
 */
 static uint32_t regseg(cpu8086_t* cpu, const int reg, const int seg) {
   return regseg_imm(cpu, cpu->regs[reg].x, cpu->regs[seg].x);
@@ -123,9 +122,9 @@ static void put8(cpu8086_t* cpu, const uint32_t addr, const uint16_t what) {
   cpu->mem->bytes[addr] = what;
 }
 /*
-  SAFE 1MB ACCESS. 8 bit equivalent of mem_get16(), but there is ofc no need for unaligned checks.
+  SAFE 1MB ACCESS. 8 bit equivalent of get16_ptr(), but there is ofc no need for unaligned checks.
 */
-static uint8_t* mem_get8(cpu8086_t* cpu, uint32_t addr, const int defs) {
+static uint8_t* get8_ptr(cpu8086_t* cpu, uint32_t addr, const int defs) {
   addr = regseg_imm(cpu, addr, get_seg(cpu, defs)->x); /* Combine with the sreg */
 
   if (addr >= MB1) {
@@ -154,14 +153,14 @@ static uint16_t get16(cpu8086_t* cpu, uint32_t addr) {
 
   return ret;
 }
-/*
-  SAFE 1MB ACCESS. Get direct ptr of CPU->mem[ADDR]. Preffered over raw access for: safety(will 
-  CPU->e and return undefined but non NULL/unsafe address) & easier for unaligned access.
-  Emulates memory access.
-  DEFS must be REG8086_*, it's the default sreg used, pop needs mem_get8/16() + regular addressing.
-  As mentioned above, may set CPU->e to E8086_ACCESS_VIOLATION, or E8086_UNALIGNED.
-*/
-static uint16_t* mem_get16(cpu8086_t* cpu, uint32_t addr, const int defs) {
+/**
+ * Safe 1MB access.
+ * DEFS must be REG8086_*, it's the default segment regregister used, unless CPU->seg says otherwise.
+ * ADDR is the address within the segment chosen.
+ * Returns pointer to ADDR combined with a segment register, unless it violates access, in which case a safe but wrong address is returned.
+ * CPU->e may be set to E8086_ACCESS_VIOLATION.
+ */
+static uint16_t* get16_ptr(cpu8086_t* cpu, uint32_t addr, const int defs) {
   addr = regseg_imm(cpu, addr, get_seg(cpu, defs)->x); /* Combine with the sreg */
 
   if (addr >= MB1 - 1) {
@@ -175,11 +174,11 @@ static uint16_t* mem_get16(cpu8086_t* cpu, uint32_t addr, const int defs) {
   
   return (uint16_t*)(cpu->mem->bytes + addr);
 }
-/*
-  SAFE 1MB ACCESS. Set CPU->mem[ADDR] = what. Preffered over raw access for: safety(will CPU->e 
-  and will not set) & easier for unaligned access.
-  As mentioned above, may set CPU->e to E8086_ACCESS_VIOLATION.
-*/
+/**
+ * Safe 1MB access.
+ * Stores WHAT in CPU->mem[ADDR], even if unaligned, for alignment checks use .
+ * CPU->e may be set to E8086_ACCESS_VIOLATION.
+ */
 static void put16(cpu8086_t* cpu, const uint32_t addr, const uint16_t what) {
   uint8_t* p = cpu->mem->bytes + addr;
 
@@ -188,8 +187,6 @@ static void put16(cpu8086_t* cpu, const uint32_t addr, const uint16_t what) {
     return;
   }
   
-  /* memcpy(cpu->mem->bytes + addr, &what, 2); */
-
   p[0] = what;
   p[1] = what >> 8;
 }
@@ -228,7 +225,7 @@ static uint16_t pop16(cpu8086_t* cpu) {
   uint32_t stack_ptr = regseg_imm(cpu, cpu->regs[REG8086_SP].x, GET_SEG_SS(cpu)->x);
 
   /* Copy the content before modifying stack_ptr */
-  ret = *mem_get16(cpu, stack_ptr, REG8086_SS);
+  ret = *get16_ptr(cpu, stack_ptr, REG8086_SS);
 
   /* Add 2 back */
   regseg_add(&cpu->regs[REG8086_SP], GET_SEG_SS(cpu), 2);
@@ -340,12 +337,13 @@ static void test_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const i
 /*
   Note that REL_ADDR is signed.
   May set CPU->e to E8086_ACCESS_VIOLATION in the case where REL_ADDR over/underflows.
+  Returns 1 if jumped.
   You still need to increment for JMP and conditional jumps CPU->ip_add, because short jumps only take into account distance from NEXT instruction.
 */
-static void short_jump(cpu8086_t* cpu, int8_t rel_addr) {
+static int short_jump(cpu8086_t* cpu, int8_t rel_addr) {
   if (rel_addr + cpu->ip_cs >= MB1) {
     cpu->e = E8086_ACCESS_VIOLATION;
-    return;
+    return 0;
   }
 
   if (rel_addr > 0) {
@@ -354,22 +352,22 @@ static void short_jump(cpu8086_t* cpu, int8_t rel_addr) {
   else {
     REGSEG_IP_CS_SUB(cpu, -rel_addr);
   }
+  return 1;
 }
 
 /*
   May set CPU->e to E8086_ACCESS_VIOLATION in the case where CS:IP over/underflows.
-  Let it set CPU->ip_add itself!
+  Returns 1 if jumped.
 */
-static void far_jump(cpu8086_t* cpu, uint16_t ip, uint16_t cs) {
-  if (ip + cs >= MB1) {
+static int far_jump(cpu8086_t* cpu, uint16_t ip, uint16_t cs) {
+  if ((uint32_t)ip + cs >= MB1) {
     cpu->e = E8086_ACCESS_VIOLATION;
-    cpu->ip_add = 1; /* To not be stuck in a loop */
-    return;
+    return 0;
   }
 
   cpu->regs[REG8086_IP].x = ip;
   cpu->regs[REG8086_CS].x = cs;
-  cpu->ip_add = 0;
+  return 1;
 }
 
 /*
@@ -466,8 +464,9 @@ static void* get_modrm_seg(cpu8086_t* cpu, uint8_t modrm) {
   }
 }
 
-/*
-  * SAFE 1MB ACCESS. CPU->ip_cs is expected to be at the first byte, not modrm.
+/**
+  * Safe 1MB access.
+  * CPU->ip_cs is expected to be at the first byte, not modrm.
   * MODRM is the modr/m byte.
   * W_BIT indicates if it's a word operation, and hence the size of the data in the pointer.
   * Returns a pointer to what the R/M points to, e.g address in CPU->mem, or a register.
@@ -484,7 +483,6 @@ static void* get_modrm_rm(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
   /* Direct addressing, MOD=0,R/M=6 */
   else if ((modrm & MODRM_MOD_MASK) == MOD_NDISP && (modrm & MODRM_RM_MASK) == RM_BP) {
     addr = regseg_imm(cpu, get16(cpu, cpu->ip_cs + 2), cpu->regs[REG8086_DS].x);
-    cpu->ip_add = 4;
   }
   /* Using various register-displacement combinations depending on MOD+R/M */
   else {
@@ -531,10 +529,10 @@ static void* get_modrm_rm(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
   }
 
   if (w_bit) {
-    rm = mem_get16(cpu, addr, REG8086_DS);
+    rm = get16_ptr(cpu, addr, REG8086_DS);
   }
   else {
-    rm = mem_get8(cpu, addr, REG8086_DS);
+    rm = get8_ptr(cpu, addr, REG8086_DS);
   }
 
   return rm;
@@ -770,18 +768,18 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     /* XXX: I hate the way it looks. */
     if (d_bit) {
       if (w_bit) {
-        *mem_get16(cpu, addr, REG8086_DS) = *(uint16_t*)ax_al;
+        *get16_ptr(cpu, addr, REG8086_DS) = *(uint16_t*)ax_al;
       }
       else {
-        *mem_get8(cpu, addr, REG8086_DS) = *(uint8_t*)ax_al;
+        *get8_ptr(cpu, addr, REG8086_DS) = *(uint8_t*)ax_al;
       }
     }
     else {
       if (w_bit) {
-        *(uint16_t*)ax_al = *mem_get16(cpu, addr, REG8086_DS);
+        *(uint16_t*)ax_al = *get16_ptr(cpu, addr, REG8086_DS);
       }
       else {
-        *(uint8_t*)ax_al = *mem_get8(cpu, addr, REG8086_DS);
+        *(uint8_t*)ax_al = *get8_ptr(cpu, addr, REG8086_DS);
       }
     }
 
@@ -840,24 +838,26 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     else {
       cpu->cycles += 4;
     }
-    cpu->ip_add = 2;
+    cpu->ip_add = 2; /* Whether jumped or not, we still gotta add 2 since it's relative to next instruction. */
   }
   /* MOV MOD/RM for sregs */
   else if (opcode == 0x8C || opcode == 0x8E) {
-    int d_bit = (opcode & 0x2) ? 1 : 0;
+    int d_bit = (opcode & 0x2) >> 1;
     uint8_t modrm = get8(cpu, cpu->ip_cs + 1);
     uint16_t* dst = get_modrm_rm(cpu, modrm, 1);
     uint16_t* src = get_modrm_seg(cpu, modrm);
+    
     if (d_bit) {
       uint16_t* tmp = src;
       src = dst;
       dst = tmp;
     }
+
     *dst = *src;
 
     cpu->ip_add = get_modrm_ip_add(modrm);
   }
-  /* MOV MOD/RM IMM8/IMM16 */
+  /* MOV MOD/RM IMM8 or MOV MOD/RM IMM16 */
   else if (opcode == 0xC6 || opcode == 0xC7) {
     int w_bit = opcode & 1;
     uint8_t modrm = get8(cpu, cpu->ip_cs + 1);
@@ -873,15 +873,16 @@ int cycle_cpu8086(cpu8086_t* cpu) {
       cpu->ip_add = get_modrm_ip_add(modrm) + 1;
     }
   }
-  /* CALL/JMP IMM16, CALL just pushes to stack so... */
-  else if (opcode == 0xE8 || opcode == 0xE9) {
+  /* JMP IMM16 or CALL IMM16 */
+  else if (opcode == 0xE9 || opcode == 0xE8) {
+    /* Was it a call? */
     if (opcode == 0xE8) {
-      push16(cpu, cpu->regs[REG8086_IP].x + 3); /* +3 for this instruction. */
+      push16(cpu, cpu->regs[REG8086_IP].x + 1 + 2);
     }
     cpu->regs[REG8086_IP].x = get16(cpu, cpu->ip_cs + 1);
     cpu->ip_add = 0; /* ADD BAD! */
   }
-  /* JMP/CALL FAR IMM16:IMM16 */
+  /* JMP FAR IMM16:IMM16 or CALL FAR IMM16:IMM16 */
   else if (opcode == 0xEA || opcode == 0x9A) {
     /* These are where we jump */
     uint16_t ip = get16(cpu, cpu->ip_cs + 1);
@@ -898,40 +899,33 @@ int cycle_cpu8086(cpu8086_t* cpu) {
       push16(cpu, ip2.x);
       push16(cpu, cs2.x);
     }
-
-    far_jump(cpu, ip, cs); /* Sets ip_add itself. */
+    /* 1 if didn't jump since we don't want to be stuck in a loop */
+    cpu->ip_add = far_jump(cpu, ip, cs) ? 0 : 1;
   }
   /* JMP IMM8 */
   else if (opcode == 0xEB) {
     short_jump(cpu, get8(cpu, cpu->ip_cs + 1));
     cpu->ip_add = 2; /* Since it's from the next instruction */
   }
-  /* RET IMM16 */
-  else if (opcode == 0xC2) {
+  /* RET IMM16 or RET */
+  else if (opcode == 0xC2 || opcode == 0xC3) {
     uint16_t extra = get16(cpu, cpu->ip_cs + 1);
     cpu->regs[REG8086_IP].x = pop16(cpu);
     /* Extra popping */
-    regseg_add(&cpu->regs[REG8086_SP], GET_SEG_SS(cpu), extra);
+    if (opcode == 0xC3) {
+      regseg_add(&cpu->regs[REG8086_SP], GET_SEG_SS(cpu), extra);
+    }
     cpu->ip_add = 0; /* ADD BAD! */
   }
-  /* RET */
-  else if (opcode == 0xC3) {
-    cpu->regs[REG8086_IP].x = pop16(cpu);
-    cpu->ip_add = 0; /* ADD BAD! */
-  }
-  /* RET FAR IMM16 */
-  else if (opcode == 0xCA) {
+  /* RET FAR IMM16 or RET FAR */
+  else if (opcode == 0xCA || opcode == 0xCB) {
     uint16_t extra = get16(cpu, cpu->ip_cs + 1);
     cpu->regs[REG8086_CS].x = pop16(cpu);
     cpu->regs[REG8086_IP].x = pop16(cpu);
     /* Extra popping */
-    regseg_add(&cpu->regs[REG8086_SP], GET_SEG_SS(cpu), extra);
-    cpu->ip_add = 0; /* ADD BAD! */
-  }
-  /* RET FAR */
-  else if (opcode == 0xCB) {
-    cpu->regs[REG8086_CS].x = pop16(cpu);
-    cpu->regs[REG8086_IP].x = pop16(cpu);
+    if (opcode == 0xCB) {
+      regseg_add(&cpu->regs[REG8086_SP], GET_SEG_SS(cpu), extra);
+    }
     cpu->ip_add = 0; /* ADD BAD! */
   }
   /* UNKNOWN! or NOP */
