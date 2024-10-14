@@ -145,6 +145,50 @@ static void test_modrm_888b(void) {
   );
 }
 
+static void test_mov_rm_imm(void) {
+  cpu8086_t cpu;
+  mem_t mem;
+  /*
+    mov byte ds:[3], 0x12
+    mov byte ds:[4], 0x34
+    mov word es:[6], 0x1234
+  */
+  uint8_t code[] = {
+    0x3e, 0xc6, 0x06, 0x03, 0x00, 0x12, 0x3e, 0xc6, 0x06, 0x04, 0x00, 0x34,
+    0x26, 0xc7, 0x06, 0x06, 0x00, 0x34, 0x12
+  };
+
+  HOPE_THAT(init_mem8086(&mem, 0), "Memory initialized.");
+  HOPE_THAT(reset_cpu8086(&cpu, &mem), "CPU initialized.");
+
+  /* Force custom config on some registers for testing purposes */
+  cpu.regs[REG8086_SS].x = 0xF000;
+  cpu.regs[REG8086_DS].x = 0xA000;
+  cpu.regs[REG8086_ES].x = 0xB000;
+  cpu.regs[REG8086_CS].x = 0xD000;
+  cpu.regs[REG8086_IP].x = 1; /* Just to test unaligned instructions */
+
+  memcpy(mem.bytes + 0xD0001, code, sizeof (code));
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    mem.bytes[0xA0003] == 0x12,
+    "mov byte ds:[3], 0x12"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    mem.bytes[0xA0004] == 0x34,
+    "mov byte ds:[4], 0x12"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    mem.bytes[0xB0006] == 0x34 && mem.bytes[0xB0007] == 0x12,
+    "mov word es:[6], 0x1234"
+  );
+}
+
 /* Tests the mov instructions at 0xA0-0xA3 */
 static void test_a0a3_and_sreg_prefix(void) {
   cpu8086_t cpu;
@@ -480,14 +524,17 @@ static void test_parity_table(void) {
   );
 }
 
+
 void add_cpu8086_tests(void) {
   add_mem_tests(); /* cpu8086_t depends on proper mem_t function. */
   ADD_TEST(test_regseg);
   ADD_TEST(test_parity_table);
   ADD_TEST(test_update_flags);
+
   ADD_TEST(test_cycling0);
   ADD_TEST(test_a0a3_and_sreg_prefix);
   ADD_TEST(test_dstsrc_0030_and_condjmp);
   ADD_TEST(test_sreg_mov_and_modrmb);
   ADD_TEST(test_modrm_888b);
+  ADD_TEST(test_mov_rm_imm);
 }

@@ -1,6 +1,3 @@
-  mov bl, 0x12
-  mov ch, 0x34,
-  mov dh, bl
-  mov dl, ch ; ax=0x1234
-  mov es, dx
-  mov ds:[2], es
+mov byte ds:[3], 0x12
+mov byte ds:[4], 0x34
+mov word es:[3], 0x1234

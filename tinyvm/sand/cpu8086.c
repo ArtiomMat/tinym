@@ -194,6 +194,16 @@ static void put16(cpu8086_t* cpu, const uint32_t addr, const uint16_t what) {
   p[1] = what >> 8;
 }
 
+/* Pushes SEG, where SEG is the enum REG8086_*. increments cycles and ip_add accordingly */
+#define PUSH_SEG(CPU, SEG) push16(CPU, CPU->regs[SEG].x);\
+    CPU->cycles += 10;\
+    CPU->ip_add = 1;
+
+/* Pops into SEG, where SEG is the enum REG8086_*. increments cycles and ip_add accordingly */
+#define POP_SEG(CPU, SEG) CPU->regs[SEG].x = pop16(CPU);\
+    CPU->cycles += 8;\
+    CPU->ip_add = 1;
+
 /*
   SAFE 1MB ACCESS. Pushes X into CPU->mem using CPU's stack registers.
   May set CPU->e to E8086_ACCESS_VIOLATION if the stack wrapped around and wont push. Uses regseg() so may set to its errors.
@@ -529,7 +539,7 @@ static void* get_modrm_rm(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
   return rm;
 }
 
-static uint8_t get_modrm_ip_add(cpu8086_t* cpu, uint8_t modrm) {
+static uint8_t get_modrm_ip_add(uint8_t modrm) {
   switch (modrm & MODRM_MOD_MASK) {
     case MOD_DISP16:
     return 4;
@@ -630,7 +640,7 @@ static int get_dstsrc_0030(cpu8086_t* cpu, uint8_t opcode, void** dst, void** sr
   }
 
   /* CPU->ip_add */
-  cpu->ip_add = get_modrm_ip_add(cpu, modrm);
+  cpu->ip_add = get_modrm_ip_add(modrm);
 
   return w_bit;
 }
@@ -687,11 +697,39 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     cpu->cycles += 11;
     cpu->ip_add = 1;
   }
+  /* PUSH ES */
+  else if (opcode == 0x06) {
+    PUSH_SEG(cpu, REG8086_ES);
+  }
+  /* PUSH SS */
+  else if (opcode == 0x16) {
+    PUSH_SEG(cpu, REG8086_SS);
+  }
+  /* PUSH CS */
+  else if (opcode == 0x0E) {
+    PUSH_SEG(cpu, REG8086_CS);
+  }
+  /* PUSH DS */
+  else if (opcode == 0x1E) {
+    PUSH_SEG(cpu, REG8086_DS);
+  }
   /* POP R16 */
   else if (opcode >= 0x58 && opcode <= 0x5F) {
     cpu->regs[REG8086_AX + (opcode & 7)].x = pop16(cpu);
     cpu->cycles += 8;
     cpu->ip_add = 1;
+  }
+  /* POP ES */
+  else if (opcode == 0x07) {
+    POP_SEG(cpu, REG8086_ES);
+  }
+  /* POP SS */
+  else if (opcode == 0x17) {
+    POP_SEG(cpu, REG8086_SS);
+  }
+  /* POP DS */
+  else if (opcode == 0x1F) {
+    POP_SEG(cpu, REG8086_DS);
   }
   /* MOV R16, IMM16 */
   else if (opcode >= 0xB8 && opcode <= 0xBF) {
@@ -721,6 +759,40 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     else {
       *(uint8_t*)dst = *(uint8_t*)src;
     }
+  }
+  /* MOV AL/AX, ADDR or MOV ADDR, AL/AX. So much hard-wired stuff man. */
+  else if (opcode >= 0xA0 && opcode <= 0xA3) {
+    uint8_t d_bit = (opcode & 0x2) >> 1;
+    uint8_t w_bit = opcode & 0x1;
+    uint16_t addr = get16(cpu, cpu->ip_cs + 1);
+    void* ax_al = &cpu->regs[REG8086_AX]; /* Little-endian magic */
+    /* XXX: I hate the way it looks. */
+    if (d_bit) {
+      if (w_bit) {
+        *mem_get16(cpu, addr, REG8086_DS) = *(uint16_t*)ax_al;
+      }
+      else {
+        *mem_get8(cpu, addr, REG8086_DS) = *(uint8_t*)ax_al;
+      }
+    }
+    else {
+      if (w_bit) {
+        *(uint16_t*)ax_al = *mem_get16(cpu, addr, REG8086_DS);
+      }
+      else {
+        *(uint8_t*)ax_al = *mem_get8(cpu, addr, REG8086_DS);
+      }
+    }
+
+    cpu->ip_add = 3;
+    cpu->cycles += 10;
+  }
+  /* XCHG R16, AX */
+  else if (opcode >= 0x91 && opcode <= 0x97) {
+    uint8_t reg = opcode & 7; /* Wont be AX */
+    uint16_t tmp = cpu->regs[reg].x;
+    cpu->regs[reg].x = cpu->regs[REG8086_AX].x;
+    cpu->regs[REG8086_AX].x = tmp;
   }
   /* ??? MODR/M or ??? AL/AX, IMM8/16 section */
   /* ADD */
@@ -769,33 +841,6 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     }
     cpu->ip_add = 2;
   }
-  /* MOV AL/AX, ADDR or MOV ADDR, AL/AX. So much hard-wired stuff man. */
-  else if (opcode >= 0xA0 && opcode <= 0xA3) {
-    uint8_t d_bit = (opcode & 0x2) >> 1;
-    uint8_t w_bit = opcode & 0x1;
-    uint16_t addr = get16(cpu, cpu->ip_cs + 1);
-    void* ax_al = &cpu->regs[REG8086_AX]; /* Little-endian magic */
-    /* XXX: I hate the way it looks. */
-    if (d_bit) {
-      if (w_bit) {
-        *mem_get16(cpu, addr, REG8086_DS) = *(uint16_t*)ax_al;
-      }
-      else {
-        *mem_get8(cpu, addr, REG8086_DS) = *(uint8_t*)ax_al;
-      }
-    }
-    else {
-      if (w_bit) {
-        *(uint16_t*)ax_al = *mem_get16(cpu, addr, REG8086_DS);
-      }
-      else {
-        *(uint8_t*)ax_al = *mem_get8(cpu, addr, REG8086_DS);
-      }
-    }
-
-    cpu->ip_add = 3;
-    cpu->cycles += 10;
-  }
   /* MOV MOD/RM for sregs */
   else if (opcode == 0x8C || opcode == 0x8E) {
     int d_bit = (opcode & 0x2) ? 1 : 0;
@@ -809,9 +854,25 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     }
     *dst = *src;
 
-    cpu->ip_add = get_modrm_ip_add(cpu, modrm);
+    cpu->ip_add = get_modrm_ip_add(modrm);
   }
-  /* CALL/JMP IMM16/IMM16, CALL just pushes to stack so... */
+  /* MOV MOD/RM IMM8/IMM16 */
+  else if (opcode == 0xC6 || opcode == 0xC7) {
+    int w_bit = opcode & 1;
+    uint8_t modrm = get8(cpu, cpu->ip_cs + 1);
+    void* dst = get_modrm_rm(cpu, modrm, w_bit);
+    uint32_t imm_addr = cpu->ip_cs + get_modrm_ip_add(modrm);
+
+    if (w_bit) {
+      *(uint16_t*)dst = get16(cpu, imm_addr);
+      cpu->ip_add = get_modrm_ip_add(modrm) + 2;
+    }
+    else {
+      *(uint8_t*)dst = get8(cpu, imm_addr);
+      cpu->ip_add = get_modrm_ip_add(modrm) + 1;
+    }
+  }
+  /* CALL/JMP IMM16, CALL just pushes to stack so... */
   else if (opcode == 0xE8 || opcode == 0xE9) {
     if (opcode == 0xE8) {
       push16(cpu, cpu->regs[REG8086_IP].x + 3); /* +3 for this instruction. */
@@ -819,10 +880,24 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     cpu->regs[REG8086_IP].x = get16(cpu, cpu->ip_cs + 1);
     cpu->ip_add = 0; /* ADD BAD! */
   }
-  /* JMP FAR IMM16 */
-  else if (opcode == 0xEA) {
+  /* JMP/CALL FAR IMM16:IMM16 */
+  else if (opcode == 0xEA || opcode == 0x9A) {
+    /* These are where we jump */
     uint16_t ip = get16(cpu, cpu->ip_cs + 1);
     uint16_t cs = get16(cpu, cpu->ip_cs + 3);
+
+    /* Was it a call? */
+    if (opcode == 0x9A) {
+      /* These are what is pushed */
+      reg8086_t ip2, cs2;
+      ip2.x = ip;
+      cs2.x = cs;
+      regseg_add(&ip2, &cs2, 4);
+
+      push16(cpu, ip);
+      push16(cpu, cs);
+    }
+
     far_jump(cpu, ip, cs); /* Sets ip_add itself. */
   }
   /* JMP IMM8 */
@@ -858,7 +933,7 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     cpu->regs[REG8086_IP].x = pop16(cpu);
     cpu->ip_add = 0; /* ADD BAD! */
   }
-  /* UNKNOWN! */
+  /* UNKNOWN! or NOP */
   else {
     if (opcode == 0x66 || opcode == 0x67) {
       fputs("cycle_cpu8086(): you'll need i386 for that.", stderr);
