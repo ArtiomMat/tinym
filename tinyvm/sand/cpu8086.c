@@ -46,8 +46,10 @@ int reset_cpu8086(cpu8086_t* cpu, mem_t* mem) {
 }
 
 /**
- * Returns a segment register pointer from CPU, and takes segment prefixes into account via CPU->seg.
- * DEFS must be REG8086_*, it's the default segment regregister returned, unless CPU->seg was set due to prefixing.
+ * @brief Get a default segment register unless prefixed otherwise.
+ * @param cpu 
+ * @param defs must be REG8086_*, it's the default segment regregister returned, unless CPU->seg was set due to prefixing.
+ * @return a segment register pointer from CPU, and takes segment prefixes into account via CPU->seg.
  */
 static reg8086_t* get_seg(cpu8086_t* cpu, const int defs) {
   if (cpu->seg != REG8086_NULL) {
@@ -56,11 +58,14 @@ static reg8086_t* get_seg(cpu8086_t* cpu, const int defs) {
   return cpu->regs + defs;
 }
 
-/*
-  SAFE 1MB ACCESS. Joins 2 immidiete values into a segmented 20-bit address.
-  The rest of the 12 bits returned will be 0, to avoid potential buffer overflow.
-  May set CPU->e to E8086_ACCESS_VIOLATION if we go out of 1MB bounds.
-*/
+/**
+ * @brief Safe 1MB access. Joins reg:SEG into an address.
+ * @param cpu 
+ * @param reg 
+ * @param seg 
+ * @return REG:SEG
+ * @warning May set CPU->e to E8086_ACCESS_VIOLATION if we go out of 1MB bounds.
+ */
 static uint32_t regseg_imm(cpu8086_t* cpu, const uint16_t reg, const uint16_t seg) {
   uint32_t ret = reg + (seg << 4);
   if (0xFFF00000 & ret) {
@@ -69,10 +74,10 @@ static uint32_t regseg_imm(cpu8086_t* cpu, const uint16_t reg, const uint16_t se
   }
   return ret;
 }
-/*
-  SAFE 1MB ACCESS.
-  Equivalent of regseg_imm() but for actual regs. REG and SEG are the REG8086_* enum.
-*/
+/**
+ * Safe 1MB access.
+ * regseg_imm() but for REG8086_*
+ */
 static uint32_t regseg(cpu8086_t* cpu, const int reg, const int seg) {
   return regseg_imm(cpu, cpu->regs[reg].x, cpu->regs[seg].x);
 }
@@ -80,6 +85,10 @@ static uint32_t regseg(cpu8086_t* cpu, const int reg, const int seg) {
   Allows reg/seg > 1MB, but it's ok. Adds ADDR to the REG+SEG in a way that prevents overflow.
   E.G if ADDR=1, REG=0xFFFF then we need to do *SEG+=0x10000 and REG=0
 */
+/**
+ * Allows SEG:REG > 1MB, always index with 1MB safe functions.
+ * 
+ */
 static void regseg_add(reg8086_t* reg, reg8086_t* seg, const uint16_t addr) {
   if ((uint32_t)reg->x + addr > 0xFFFF) {
     reg->x = (0x0000 + addr) - 1;
@@ -464,28 +473,30 @@ static void* get_modrm_seg(cpu8086_t* cpu, uint8_t modrm) {
   }
 }
 
-/**
-  * Safe 1MB access.
-  * CPU->ip_cs is expected to be at the first byte, not modrm.
-  * MODRM is the modr/m byte.
-  * W_BIT indicates if it's a word operation, and hence the size of the data in the pointer.
-  * Returns a pointer to what the R/M points to, e.g address in CPU->mem, or a register.
+/*
+  * Analyzes MODRM(the modr/m byte)+W_BIT as if MOD=3, meaning it's literally a reg field again.
 */
-static void* get_modrm_rm(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
-  void* rm;
-  uint32_t addr;
+static void* get_modrm_rm_reg(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
+  return get_modrm_reg(cpu, modrm << 3, w_bit);
+}
 
+/*
+  * Can return unsafe address, always use safe safe indexing functions.
+  * Analyzes MODRM(the modr/m byte) and returns a full 32 but address if R/M part represents an address.
+  * If address returned is UINT32_MAX then MOD=3, in which case you need get_modrm_rm_reg(cpu, mod_rm, w_bit).
+*/
+static uint32_t get_modrm_rm_addr(cpu8086_t* cpu, uint8_t modrm) {
   /* R/M is REG, MOD=3, so just shift by 3 to put RM in REG and return. */
   if ((modrm & MODRM_MOD_MASK) == MOD_RM_IS_REG) {
-    rm = get_modrm_reg(cpu, modrm << 3, w_bit);
-    return rm;
+    return UINT32_MAX;
   }
   /* Direct addressing, MOD=0,R/M=6 */
   else if ((modrm & MODRM_MOD_MASK) == MOD_NDISP && (modrm & MODRM_RM_MASK) == RM_BP) {
-    addr = regseg_imm(cpu, get16(cpu, cpu->ip_cs + 2), cpu->regs[REG8086_DS].x);
+    return regseg_imm(cpu, get16(cpu, cpu->ip_cs + 2), cpu->regs[REG8086_DS].x);
   }
   /* Using various register-displacement combinations depending on MOD+R/M */
   else {
+    uint32_t addr;
     /* Add the register stuff */
     switch (modrm & MODRM_RM_MASK) {
       case RM_BX_SI:
@@ -526,18 +537,39 @@ static void* get_modrm_rm(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
       default:
       break;
     }
+
+    return addr;
+  }
+}
+
+/**
+  * Safe 1MB access.
+  * CPU->ip_cs is expected to be at the first byte, not modrm.
+  * MODRM is the modr/m byte.
+  * W_BIT indicates if it's a word operation, and hence the size of the data in the pointer.
+  * Returns a pointer to what the R/M points to, e.g address in CPU->mem, or a register.
+*/
+static void* get_modrm_rm(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
+  uint32_t addr = get_modrm_rm_addr(cpu, modrm);
+
+  /* It's a REG field. */
+  if (addr == UINT32_MAX) {
+    return get_modrm_rm_reg(cpu, modrm, w_bit);
   }
 
   if (w_bit) {
-    rm = get16_ptr(cpu, addr, REG8086_DS);
+    return get16_ptr(cpu, addr, REG8086_DS);
   }
   else {
-    rm = get8_ptr(cpu, addr, REG8086_DS);
+    return get8_ptr(cpu, addr, REG8086_DS);
   }
-
-  return rm;
 }
 
+/**
+ * @warning Includes the opcode byte in the result.
+ * @param modrm The MODR/M byte
+ * @return What cpu8086_t.ip_add should be given a MODR/M byte.
+ */
 static uint8_t get_modrm_ip_add(uint8_t modrm) {
   switch (modrm & MODRM_MOD_MASK) {
     case MOD_DISP16:
@@ -718,6 +750,13 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     cpu->cycles += 8;
     cpu->ip_add = 1;
   }
+  /* POP R/M in 16 bit mode */
+  else if (opcode == 0x8F) {
+    uint8_t modrm = get8(cpu, cpu->ip_cs + 1);
+    uint16_t* rm = get_modrm_rm(cpu, modrm, 1);
+    *rm = pop16(cpu);
+    cpu->ip_add = get_modrm_ip_add(modrm);
+  }
   /* POP ES */
   else if (opcode == 0x07) {
     POP_SEG(cpu, REG8086_ES);
@@ -793,6 +832,13 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     cpu->regs[reg].x = cpu->regs[REG8086_AX].x;
     cpu->regs[REG8086_AX].x = tmp;
   }
+  /* XCHG R16, AX */
+  else if (opcode >= 0x91 && opcode <= 0x97) {
+    uint8_t reg = opcode & 7; /* Wont be AX */
+    uint16_t tmp = cpu->regs[reg].x;
+    cpu->regs[reg].x = cpu->regs[REG8086_AX].x;
+    cpu->regs[REG8086_AX].x = tmp;
+  }
   /* ??? MODR/M or ??? AL/AX, IMM8/16 section */
   /* ADD */
   else if (/* opcode >= 0x00 && */ opcode <= 0x05) {
@@ -826,6 +872,16 @@ int cycle_cpu8086(cpu8086_t* cpu) {
   /* CMP */
   else if (opcode >= 0x38 && opcode <= 0x3D) {
     VOID_INS_DSTSRC_0030(cpu, opcode, cmp_ins);
+  }
+  /* TEST AL, IMM8 */
+  else if (opcode == 0xA8) {
+    test_ins(cpu, cpu->regs[REG8086_AX].p[0], get8(cpu, cpu->ip_cs + 1), 0);
+    cpu->ip_add = 2;
+  }
+  /* TEST AX, IMM16 */
+  else if (opcode == 0xA8) {
+    test_ins(cpu, cpu->regs[REG8086_AX].x, get16(cpu, cpu->ip_cs + 1), 1);
+    cpu->ip_add = 3;
   }
   /* Various conditional jumps, relative to current instruction. */
   else if (opcode >= 0x70 && opcode <= 0x7F) {
@@ -935,7 +991,7 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     }
     cpu->cycles += 1;
   }
-
+  
   REGSEG_IP_CS_ADD(cpu, cpu->ip_add);
   return cpu->e != E8086_OK;
 }
