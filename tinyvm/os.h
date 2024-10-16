@@ -1,4 +1,6 @@
-/* os.h : An interface with various operating system stuff needed by the VM. */
+/**
+ * @brief An interface with various operating system stuff needed by the VM.
+ */
 
 #ifndef OS_H
 #define OS_H
