@@ -685,11 +685,13 @@ static uint8_t get_modrm_ip_add(uint8_t modrm) {
   * 
   * It's also applicable to MOV in 0x88-0x8B, even through it doesn't have the AL-AX thingy, due 
   * to modulus-like design, and 8086 aligned stuff nicely.
+  * 
+  * Sets `cpu->ip_add` by itself.
  * @param cpu 
  * @param opcode The opcode byte.
  * @param dst A pointer to a pointer of the modified(usually, but sometimes theoretically) operand.
  * @param src A pointer to a pointer of the source(copied/utilized/constant) operand.
- * @return If W bit was set in the modr/m byte, so you know if *SRC and *DST are uint16_t or uint8_t.
+ * @return If W bit was set in the modr/m byte, so you know if `*src` and `*dst` are `uint16_t` or `uint8_t`.
  * @warning Errors: `E8086_ACCESS_VIOLATION`, `E8086_UNALIGNED`.
  */
 static int get_dstsrc_0030(cpu8086_t* cpu, uint8_t opcode, void** dst, void** src) {
@@ -725,10 +727,21 @@ static int get_dstsrc_0030(cpu8086_t* cpu, uint8_t opcode, void** dst, void** sr
     *dst = tmp;
   }
 
-  /* CPU->ip_add */
   cpu->ip_add = get_modrm_ip_add(modrm);
 
   return w_bit;
+}
+
+/**
+ * @brief Meant to be used if current instruction byte is a prefix, skip it.
+ * @param cpu 
+ * @return The next opcode.
+ */
+uint8_t skip_prefix(cpu8086_t* cpu) {
+  cpu->cycles += 1;
+  REGSEG_IP_CS_ADD(cpu, 1);
+  cpu->ip_cs = REGSEG_IP_CS(cpu);
+  return get8(cpu, cpu->ip_cs);
 }
 
 int cycle_cpu8086(cpu8086_t* cpu) {
@@ -741,26 +754,39 @@ int cycle_cpu8086(cpu8086_t* cpu) {
 
   opcode = get8(cpu, cpu->ip_cs); /* opcode byte */
 
-  /* TODO: Make multi-prefix support, since it's possible I think? */
   /* Prefixes */
-  switch (opcode) {
-    case 0x26:
-    cpu->seg = REG8086_ES;
-    break;
-    case 0x36:
-    cpu->seg = REG8086_SS;
-    break;
-    case 0x2E:
-    cpu->seg = REG8086_CS;
-    break;
-    case 0x3E:
-    cpu->seg = REG8086_DS;
-    break;
-  }
-  if (cpu->seg != REG8086_NULL) {
-    REGSEG_IP_CS_ADD(cpu, 1);
-    cpu->ip_cs = REGSEG_IP_CS(cpu);
-    opcode = get8(cpu, cpu->ip_cs);
+  while (1) {
+    int done = 0;
+
+    switch (opcode) {
+      case 0x26:
+      cpu->seg = REG8086_ES;
+      opcode = skip_prefix(cpu);
+      break;
+      case 0x36:
+      cpu->seg = REG8086_SS;
+      opcode = skip_prefix(cpu);
+      break;
+      case 0x2E:
+      cpu->seg = REG8086_CS;
+      opcode = skip_prefix(cpu);
+      break;
+      case 0x3E:
+      cpu->seg = REG8086_DS;
+      opcode = skip_prefix(cpu);
+      break;
+
+      case 0xF0: /* LOCK, we don't do threads anyway so no need. */
+      break;
+
+      default:
+      done = 1;
+      break;
+    }
+
+    if (done) {
+      break;
+    }
   }
 
   /* INC R16 */
@@ -886,13 +912,27 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     uint16_t tmp = cpu->regs[reg].x;
     cpu->regs[reg].x = cpu->regs[REG8086_AX].x;
     cpu->regs[REG8086_AX].x = tmp;
+    
+    cpu->ip_add = 1;
   }
-  /* XCHG R16, AX */
-  else if (opcode >= 0x91 && opcode <= 0x97) {
-    uint8_t reg = opcode & 7; /* Wont be AX */
-    uint16_t tmp = cpu->regs[reg].x;
-    cpu->regs[reg].x = cpu->regs[REG8086_AX].x;
-    cpu->regs[REG8086_AX].x = tmp;
+  /* XCHG MODR/M */
+  else if (opcode == 0x86 || opcode == 0x87) {
+    int w_bit = (opcode & 0x1);
+    uint8_t modrm = get8(cpu, cpu->ip_cs + 1);
+    void* dst = get_modrm_reg(cpu, modrm, w_bit);
+    void* src = get_modrm_rm(cpu, modrm, w_bit);
+
+    if (w_bit) {
+      uint16_t tmp = *(uint16_t*)src;
+      *(uint16_t*)src = *(uint16_t*)dst;
+      *(uint16_t*)dst = tmp;
+    }
+    else {
+      uint8_t tmp = *(uint8_t*)src;
+      *(uint8_t*)src = *(uint8_t*)dst;
+      *(uint8_t*)dst = tmp;
+    }
+    cpu->ip_add = get_modrm_ip_add(modrm);
   }
   /* ??? MODR/M or ??? AL/AX, IMM8/16 section */
   /* ADD */
@@ -934,9 +974,23 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     cpu->ip_add = 2;
   }
   /* TEST AX, IMM16 */
-  else if (opcode == 0xA8) {
+  else if (opcode == 0xA9) {
     test_ins(cpu, cpu->regs[REG8086_AX].x, get16(cpu, cpu->ip_cs + 1), 1);
     cpu->ip_add = 3;
+  }
+  /* TEST MODR/M */
+  else if (opcode == 0x84 || opcode == 0x85) {
+    int w_bit = (opcode & 0x1);
+    uint8_t modrm = get8(cpu, cpu->ip_cs + 1);
+    void* dst = get_modrm_reg(cpu, modrm, w_bit);
+    void* src = get_modrm_rm(cpu, modrm, w_bit);
+    if (w_bit) {
+      test_ins(cpu, *(uint16_t*)dst, *(uint16_t*)src, w_bit);
+    }
+    else {
+      test_ins(cpu, *(uint8_t*)dst, *(uint8_t*)src, w_bit);
+    }
+    cpu->ip_add = get_modrm_ip_add(modrm);
   }
   /* Various conditional jumps, relative to current instruction. */
   else if (opcode >= 0x70 && opcode <= 0x7F) {

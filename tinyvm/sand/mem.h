@@ -11,11 +11,11 @@
 #define MB(N) (N*1048576U)
 #define GB(N) (N*1073741824U)
 
-/*
-  May act as a fake memory, like in real-mode, where it's not actually a contiguous 1MB but rather an illusion.
-  The idea is to just make memory interfacing and virtualization straight forward, there is mem_t
-  and the whole idea is that it stores a contiguous buffer, and the CPU virtualization decides how
-  to interpret it. 
+/**
+  * @brief May act as a fake memory, like in real-mode, where it's not actually a contiguous 1MB 
+  * but rather an illusion. The idea is to just make memory interfacing and virtualization straight 
+  * forward, there is mem_t and the whole idea is that it stores a contiguous buffer, and the CPU 
+  * virtualization decides how to interpret it. 
 */
 typedef struct {
   uint8_t* bytes;
