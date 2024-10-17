@@ -412,6 +412,59 @@ static void test_sreg_mov_and_modrmb(void) {
   );
 }
 
+static void test_call_ret_near(void) {
+  uint8_t i;
+  cpu8086_t cpu;
+  mem_t mem;
+  /*
+    org 0xA000:0x1
+      mov si, 0
+      mov cx, 2
+      mov bx, 3
+      call _MAGIC
+      mov si, 1 ; Signals done to the test
+
+    _MAGIC:
+      add cx, bx
+      mov ax, 1
+      add cx, dx
+      mov ax, cx
+      ret
+  */
+  uint8_t code[] = {
+    0xbe, 0x00, 0x00, 0xb9, 0x02, 0x00, 0xbb, 0x03, 0x00, 0xe8, 0x03, 0x00,
+    0xbe, 0x01, 0x00, 0x01, 0xd9, 0xb8, 0x01, 0x00, 0x01, 0xc1, 0x89, 0xc8,
+    0xc3
+  };
+
+  HOPE_THAT(init_mem8086(&mem, 0), "Memory initialized.");
+  HOPE_THAT(reset_cpu8086(&cpu, &mem), "CPU initialized.");
+
+  /* Force custom config on some registers for testing purposes */
+  cpu.regs[REG8086_SS].x = 0xF000;
+  cpu.regs[REG8086_SP].x = 0xE000;
+  cpu.regs[REG8086_CS].x = 0xA000;
+  cpu.regs[REG8086_IP].x = 0x1;
+  cpu.regs[REG8086_SI].x = 0;
+
+  memcpy(mem.bytes + 0xa0001, code, sizeof (code));
+
+  /* New format for testing, where we only test the end result. */
+  for (i = 0; !cpu.regs[REG8086_SI].x && i < 16; ++i) {
+    HOPE_THAT(!cycle_cpu8086(&cpu), "No error");
+  }
+
+  HOPE_THAT(
+    i < 16,
+    "The right amount of instructions ran."
+  );
+
+  HOPE_THAT(
+    cpu.regs[REG8086_AX].x == 6,
+    "AX should be 6 by the end."
+  );
+}
+
 /* Tests intersegment calls and rets. */
 static void test_call_ret_far(void) {
   cpu8086_t cpu;
@@ -451,7 +504,6 @@ static void test_call_ret_far(void) {
   HOPE_THAT(reset_cpu8086(&cpu, &mem), "CPU initialized.");
 
   /* Force custom config on some registers for testing purposes */
-  cpu.regs[REG8086_CS].x = 0;
   cpu.regs[REG8086_SS].x = 0xF000;
   cpu.regs[REG8086_SP].x = 0xE000;
   cpu.regs[REG8086_CS].x = 0xA000;
@@ -644,4 +696,5 @@ void add_cpu8086_tests(void) {
   ADD_TEST(test_modrm_888b);
   ADD_TEST(test_mov_rm_imm);
   ADD_TEST(test_call_ret_far);
+  ADD_TEST(test_call_ret_near);
 }

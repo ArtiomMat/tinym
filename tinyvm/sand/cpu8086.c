@@ -373,29 +373,29 @@ static void test_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const i
 }
 
 /**
- * @brief Adds to `cpu`'s `cs:ip` `rel_addr`+`next_ins_off`.
+ * @brief Adds to `cpu`'s `cs:ip` `disp16`+`next_ins_off`.
  * If it succeeds `cpu->ip_add` is set to 0, otherwise `next_ins_off`.
  * @param cpu 
  * @param next_ins_off The offset from current `cpu->ip_cs` of the first byte of the next instruction.
  * In other words the length of this short jump instruction(probably 2).
- * @param rel_addr Notice that it's signed, since it can also jump backward.
+ * @param disp16 Notice that it's signed, since it can also jump backward.
  * @return 1 if jumped, 0 if failed.
  * @warning Errors: `E8086_ACCESS_VIOLATION`.
  */
-static int short_jump(cpu8086_t* cpu, uint8_t next_ins_off, int8_t rel_addr) {
-  int16_t rel_addr16 = next_ins_off + rel_addr;
+static int near_jump(cpu8086_t* cpu, uint8_t next_ins_off, int16_t disp16) {
+  disp16 += next_ins_off;
 
-  if (rel_addr16 + cpu->ip_cs >= MB1) {
+  if (cpu->ip_cs + disp16 >= MB1) {
     cpu->e = E8086_ACCESS_VIOLATION;
     cpu->ip_add = next_ins_off;
     return 0;
   }
 
-  if (rel_addr16 > 0) {
-    REGSEG_IP_CS_ADD(cpu, rel_addr16);
+  if (disp16 > 0) {
+    REGSEG_IP_CS_ADD(cpu, disp16);
   }
   else {
-    REGSEG_IP_CS_SUB(cpu, -rel_addr16);
+    REGSEG_IP_CS_SUB(cpu, -disp16);
   }
 
   cpu->ip_add = 0;
@@ -403,11 +403,26 @@ static int short_jump(cpu8086_t* cpu, uint8_t next_ins_off, int8_t rel_addr) {
 }
 
 /**
- * @brief Jumps to `cs:ip`, sets `cpu->ip_add` to 0.
+ * @brief Adds to `cpu`'s `cs:ip` `disp`+`next_ins_off`.
+ * If it succeeds `cpu->ip_add` is set to 0, otherwise `next_ins_off`.
+ * @param cpu 
+ * @param next_ins_off The offset from current `cpu->ip_cs` of the first byte of the next instruction.
+ * In other words the length of this short jump instruction(probably 2).
+ * @param disp Notice that it's signed, since it can also jump backward.
+ * @return 1 if jumped, 0 if failed.
+ * @warning Errors: `E8086_ACCESS_VIOLATION`.
+ */
+static int short_jump(cpu8086_t* cpu, uint8_t next_ins_off, int8_t disp) {
+  return near_jump(cpu, next_ins_off, disp);
+}
+
+/**
+ * @brief Jumps to `cs:ip`.
  * @param cpu 
  * @param ip 
  * @param cs
  * @return 1 if jumped, 0 if failed.
+ * @warning Errors: `E8086_ACCESS_VIOLATION`.
  */
 static int far_jump(cpu8086_t* cpu, uint16_t ip, uint16_t cs) {
   if ((uint32_t)ip + cs >= MB1) {
@@ -643,7 +658,7 @@ static uint8_t get_modrm_ip_add(uint8_t modrm) {
     }
     break;
 
-    default:
+    default: /* MOD_RM_IS_REG */
     return 2;
     break;
   }
@@ -1042,10 +1057,13 @@ int cycle_cpu8086(cpu8086_t* cpu) {
   else if (opcode == 0xE9 || opcode == 0xE8) {
     /* Was it a call? */
     if (opcode == 0xE8) {
-      push16(cpu, cpu->regs[REG8086_IP].x + 1 + 2);
+      push16(cpu, cpu->regs[REG8086_IP].x + 3);
     }
-    cpu->regs[REG8086_IP].x = get16(cpu, cpu->ip_cs + 1);
-    cpu->ip_add = 0; /* ADD BAD! */
+    near_jump(cpu, 3, get16(cpu, cpu->ip_cs + 1));
+  }
+  /* JMP IMM8 */
+  else if (opcode == 0xEB) {
+    short_jump(cpu, 2, get8(cpu, cpu->ip_cs + 1));
   }
   /* JMP FAR IMM16:IMM16 or CALL FAR IMM16:IMM16 */
   else if (opcode == 0xEA || opcode == 0x9A) {
@@ -1066,10 +1084,6 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     }
     /* 4 if didn't jump since we don't want to be stuck in a loop */
     cpu->ip_add = far_jump(cpu, ip, cs) ? 0 : 4;
-  }
-  /* JMP IMM8 */
-  else if (opcode == 0xEB) {
-    short_jump(cpu, 2, get8(cpu, cpu->ip_cs + 1));
   }
   /* RET IMM16 or RET */
   else if (opcode == 0xC2 || opcode == 0xC3) {

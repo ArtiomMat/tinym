@@ -70,4 +70,21 @@ enum {
   RM_BX = 7
 };
 
+/* Grp1 OP part */
+enum {
+  OP_G1_TEST = 0 << 3,
+
+  OP_G1_NOT = 2 << 3,
+  OP_G1_NEG = 3 << 3,
+  OP_G1_MUL = 4 << 3,
+  OP_G1_IMUL = 5 << 3,
+  OP_G1_DIV = 6 << 3,
+  OP_G1_IDIV = 7 << 3
+};
+/* Grp2B OP part */
+enum {
+  OP_G2B_INC = 0 << 3,
+  OP_G2B_DEC = 1 << 3,
+};
+
 #endif
