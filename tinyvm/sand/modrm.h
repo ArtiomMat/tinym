@@ -6,6 +6,7 @@
 enum {
   MODRM_MOD_MASK = 0x3 << 6,
   MODRM_REG_MASK = 0x7 << 3,
+  MODRM_OP_MASK = MODRM_REG_MASK,
   MODRM_RM_MASK = 0x7
 };
 

@@ -412,6 +412,90 @@ static void test_sreg_mov_and_modrmb(void) {
   );
 }
 
+static void test_grp1(void) {
+  cpu8086_t cpu;
+  mem_t mem;
+  /*
+    mov ax, 3
+
+    mul ax ; Square AX, result should be 9
+
+    mov ax, 2
+    mov dx, ax
+    mov ax, 9
+
+    div dx ; AX should be 4
+
+    mov ax, -3
+    mov cx, ax
+    mov ax, 4
+
+    imul cx ; AX should be -12
+    idiv cx ; AX should be 4
+    neg ax ; AX should be -4
+    not ax ; AX should be 0xFFFC
+  */
+  uint8_t code[] = {
+  0xb8, 0x03, 0x00, 0xf7, 0xe0, 0xb8, 0x02, 0x00, 0x89, 0xc2, 0xb8, 0x09,
+  0x00, 0xf7, 0xf2, 0xb8, 0xfd, 0xff, 0x89, 0xc1, 0xb8, 0x04, 0x00, 0xf7,
+  0xe9, 0xf7, 0xf9, 0xf7, 0xd8, 0xf7, 0xd0
+  };
+
+  HOPE_THAT(init_mem8086(&mem, 0), "Memory initialized.");
+  HOPE_THAT(reset_cpu8086(&cpu, &mem), "CPU initialized.");
+
+  /* Force custom config on some registers for testing purposes */
+  cpu.regs[REG8086_SS].x = 0xF000;
+  cpu.regs[REG8086_SP].x = 0xE000;
+  cpu.regs[REG8086_CS].x = 0xA000;
+  cpu.regs[REG8086_IP].x = 0x3;
+
+  memcpy(mem.bytes + 0xA0003, code, sizeof (code));
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_AX].x == 9,
+    "squaring successful"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_AX].x == 4,
+    "division successful"
+  );
+  
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    (int16_t)cpu.regs[REG8086_AX].x == -12 && (int16_t)cpu.regs[REG8086_DX].x == -1, /* IDK why, but for some reason need (int16_t) */
+    "integer multiplication successful"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    (int16_t)cpu.regs[REG8086_AX].x == 4 && (int16_t)cpu.regs[REG8086_DX].x == 0, /* IDK why, but for some reason need (int16_t) */
+    "integer division successful"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    (int16_t)cpu.regs[REG8086_AX].x == -4,
+    "negation successful"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_AX].x == ~(-4),
+    "notting successful"
+  );
+}
+
 static void test_xchg(void) {
   cpu8086_t cpu;
   mem_t mem;
@@ -625,13 +709,13 @@ static void test_call_ret_far(void) {
   );
 }
 
-/* Tests update_flags() and its related *_ins() functions. */
+/* Tests update_bit_flags() and its related *_ins() functions. */
 static void test_update_flags(void) {
   cpu8086_t cpu;
   uint16_t* fptr = &cpu.regs[REG8086_F].x;
   *fptr = 0;
 
-  update_flags(&cpu, 0, 0);
+  update_bit_flags(&cpu, 0, 0);
 
   add_ins(&cpu, 1, 2, 1);
   HOPE_THAT(
@@ -641,7 +725,7 @@ static void test_update_flags(void) {
 
   sub_ins(&cpu, 2, 4, 1);
   HOPE_THAT(
-    *fptr & F8086_CY,
+    *fptr & F8086_C,
     "W 2-4 means carry."
   );
   HOPE_THAT(
@@ -655,7 +739,7 @@ static void test_update_flags(void) {
     "!W 2-131 means overflow."
   );
   HOPE_THAT(
-    *fptr & F8086_CY,
+    *fptr & F8086_C,
     "!W 2-131 also means carry."
   );
   HOPE_THAT(
@@ -669,7 +753,7 @@ static void test_update_flags(void) {
 
   sub_ins(&cpu, 2, 131, 1);
   HOPE_THAT(
-    *fptr & F8086_CY,
+    *fptr & F8086_C,
     "W 2-131 means carry."
   );
   HOPE_THAT(
@@ -679,7 +763,7 @@ static void test_update_flags(void) {
 
   add_ins(&cpu, 2, 131, 0);
   HOPE_THAT(
-    !(*fptr & F8086_CY),
+    !(*fptr & F8086_C),
     "!W 2+131 doesn't mean carry."
   );
   HOPE_THAT(
@@ -753,4 +837,5 @@ void add_cpu8086_tests(void) {
   ADD_TEST(test_xchg);
   ADD_TEST(test_call_ret_far);
   ADD_TEST(test_call_ret_near);
+  ADD_TEST(test_grp1);
 }

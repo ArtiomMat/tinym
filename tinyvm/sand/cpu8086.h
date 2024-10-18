@@ -56,9 +56,9 @@ enum {
 };
 
 enum {
-  F8086_CY = 1 << 0, /* Carry */
+  F8086_C = 1 << 0, /* Carry */
   F8086_P = 1 << 2, /* Parity */
-  F8086_AC = 1 << 4, /* Auxiliary carry */
+  F8086_A = 1 << 4, /* Auxiliary carry */
   F8086_Z = 1 << 6, /* Zero */
   F8086_S = 1 << 7, /* Sign */
   F8086_T = 1 << 8, /* Trap/Debug mode? */
@@ -85,7 +85,7 @@ typedef struct {
   You should use init_mem8086() for MEM, manual also ok but must adhere to standard 8086 mapping.
 */
 int reset_cpu8086(cpu8086_t* cpu, mem_t* mem);
-void interrupt_cpu8086(cpu8086_t* cpu, uint16_t sig);
+void interrupt_cpu8086(cpu8086_t* cpu, uint8_t i);
 /*
   The function is not necessarily 1 cycle, it simply running the current instruction.
   Returns whether or not an error occured, in which case the vm SHOULD handle it via CPU->e.

@@ -272,15 +272,13 @@ static uint16_t pop16(cpu8086_t* cpu) {
 }
 
 /**
- * @brief Updates the flags of `cpu` using only the result of any operation.
+ * @brief Updates the flags of `cpu` using only the result of an operation that modifies bits of the result.
  * @param cpu 
- * @param result The result of the previous operation, notice it's 32 bit, for arithmetic operations
- * to detect overflow, this is why you should always do the operations in 32 bit, and then pass
- * here, and only then truncate them back to 8/16 bit results.
- * @param w Whether or not result is in the context of a word or byte operation.
+ * @param result The result of the previous operation, notice it's 16 bit, to fit both 8 bit results and 16 bits.
+ * @param w If result is in the context of a word, or 0 for byte operation.
  */
-static void update_flags(cpu8086_t* cpu, const uint32_t result, const int w) {
-  cpu->regs[REG8086_F].x &= F8086_I | F8086_D | F8086_T;
+static void update_bit_flags(cpu8086_t* cpu, const uint32_t result, const int w) {
+  cpu->regs[REG8086_F].x &= ~(F8086_Z | F8086_S | F8086_P);
 
   if (!result) {
     cpu->regs[REG8086_F].x |= F8086_Z;
@@ -298,13 +296,30 @@ static void update_flags(cpu8086_t* cpu, const uint32_t result, const int w) {
   ) {
     cpu->regs[REG8086_F].x |= F8086_P;
   }
+}
+
+/**
+ * @brief Update flags after an arithmetic operation exclusively.
+ * @param cpu 
+ * @param result The result of the previous operation, notice it's 32 bit, for arithmetic operations
+ * to detect overflow, this is why you should always do the operations in 32 bit, and then pass
+ * here, and only then truncate them back to 8/16 bit results.
+ * @param w If result is in the context of a word, or 0 for byte operation.
+ */
+static void update_math_flags(cpu8086_t* cpu, const uint32_t result, const int w) {
+  cpu->regs[REG8086_F].x &= ~(F8086_A | F8086_O | F8086_C);
+
+  /* Auxilary carry flag */
+  if (result & 0xFFFFFF00) {
+    cpu->regs[REG8086_F].x |= F8086_A;
+  }
 
   if (w) {
     if (((int32_t)result) > 32767 || ((int32_t)result) < -32768) {
       cpu->regs[REG8086_F].x |= F8086_O;
     }
     if (result > 65535) {
-      cpu->regs[REG8086_F].x |= F8086_CY;
+      cpu->regs[REG8086_F].x |= F8086_C;
     }
   }
   else {
@@ -312,7 +327,7 @@ static void update_flags(cpu8086_t* cpu, const uint32_t result, const int w) {
       cpu->regs[REG8086_F].x |= F8086_O;
     }
     if (result > 255) {
-      cpu->regs[REG8086_F].x |= F8086_CY;
+      cpu->regs[REG8086_F].x |= F8086_C;
     }
   }
 }
@@ -320,56 +335,110 @@ static void update_flags(cpu8086_t* cpu, const uint32_t result, const int w) {
 /* Does not add cycles because not enough info. */
 static uint32_t add_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
   uint32_t result = a + b;
-  update_flags(cpu, result, w);
+  update_bit_flags(cpu, result, w);
+  update_math_flags(cpu, result, w);
   return result;
 }
 /* Does not add cycles because not enough info. */
 static uint32_t adc_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
-  uint32_t carry = cpu->regs[REG8086_F].x & F8086_CY; /* CY=1 so no shifts */
+  uint32_t carry = cpu->regs[REG8086_F].x & F8086_C; /* CY=1 so no shifts */
   uint32_t result = a + b + carry;
-  update_flags(cpu, result, w);
+  update_bit_flags(cpu, result, w);
+  update_math_flags(cpu, result, w);
   return result;
 }
 /* Does not add cycles because not enough info. */
 static uint32_t sub_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
   uint32_t result = a - b;
-  update_flags(cpu, result, w);
+  update_bit_flags(cpu, result, w);
+  update_math_flags(cpu, result, w);
   return result;
 }
 /* Does not add cycles because not enough info. */
 static uint32_t sbb_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
-  uint32_t carry = cpu->regs[REG8086_F].x & F8086_CY; /* CY=1 so no shifts */
+  uint32_t carry = cpu->regs[REG8086_F].x & F8086_C; /* CY=1 so no shifts */
   uint32_t result = a - b - carry;
-  update_flags(cpu, result, w);
+  update_bit_flags(cpu, result, w);
+  update_math_flags(cpu, result, w);
   return result;
 }
 /* Does not add cycles because not enough info. */
 static uint32_t and_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
   uint32_t result = a & b;
-  update_flags(cpu, result, w);
+  update_bit_flags(cpu, result, w);
   return result;
 }
 /* Does not add cycles because not enough info. */
 static uint32_t or_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
   uint32_t result = a | b;
-  update_flags(cpu, result, w);
+  update_bit_flags(cpu, result, w);
   return result;
 }
 /* Does not add cycles because not enough info. */
 static uint32_t xor_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
   uint32_t result = a ^ b;
-  update_flags(cpu, result, w);
+  update_bit_flags(cpu, result, w);
   return result;
+}
+/* Does not add cycles because not enough info. */
+static uint32_t mul_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
+  uint32_t result = a * b;
+  update_bit_flags(cpu, result, w);
+  update_math_flags(cpu, result, w);
+  return result;
+}
+/* Does not add cycles because not enough info. */
+static int32_t imul_ins(cpu8086_t* cpu, const int32_t a, const int32_t b, const int w) {
+  int32_t result = a * b;
+  update_bit_flags(cpu, result, w);
+  update_math_flags(cpu, result, w);
+  return result;
+}
+typedef struct {
+  uint16_t q, r;
+} div_result_t;
+/* NOTE: Does not interrupt if b=0, you must do it. Does not add cycles because not enough info. */
+static div_result_t div_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
+  uint32_t result;
+  div_result_t div_result;
+  if (!b) {
+    div_result.q = div_result.r = 0;
+    return div_result;
+  }
+  result = a / b;
+  update_bit_flags(cpu, result, w);
+  update_math_flags(cpu, result, w);
+  
+  div_result.q = result;
+  div_result.r = a % b;
+  return div_result;
+}
+/* NOTE: Does not interrupt if b=0, you must do it. Does not add cycles because not enough info. */
+static div_result_t idiv_ins(cpu8086_t* cpu, const int32_t a, const int32_t b, const int w) {
+  int32_t result;
+  div_result_t div_result;
+  if (!b) {
+    div_result.q = div_result.r = 0;
+    return div_result;
+  }
+  result = a / b;
+  update_bit_flags(cpu, result, w);
+  update_math_flags(cpu, result, w);
+
+  div_result.q = (int32_t)result;
+  div_result.r = a % b;
+  return div_result;
 }
 /* Only affects flags. Does not add cycles because not enough info. */
 static void cmp_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
   uint32_t result = a - b;
-  update_flags(cpu, result, w);
+  update_bit_flags(cpu, result, w);
+  update_math_flags(cpu, result, w);
 }
 /* Only affects flags. Does not add cycles because not enough info. */
 static void test_ins(cpu8086_t* cpu, const uint32_t a, const uint32_t b, const int w) {
   uint32_t result = a & b;
-  update_flags(cpu, result, w);
+  update_bit_flags(cpu, result, w);
 }
 
 /**
@@ -456,7 +525,7 @@ static int check_cond_jmp(cpu8086_t* cpu, uint8_t opcode) {
 
     case 0x02: /* JC/JB/JNAE */
     case 0x03: /* JNC/JNB/JAE */
-    do_jump = (opcode&1) ^ (!!(f & F8086_CY));
+    do_jump = (opcode&1) ^ (!!(f & F8086_C));
     break;
 
     case 0x04: /* JE/JZ */
@@ -466,7 +535,7 @@ static int check_cond_jmp(cpu8086_t* cpu, uint8_t opcode) {
     
     case 0x06: /* JBE/JNA */
     case 0x07: /* JA/JNBE */
-    do_jump = (opcode&1) ^ ((!!(f & F8086_CY)) | (!!(f & F8086_Z))); 
+    do_jump = (opcode&1) ^ ((!!(f & F8086_C)) | (!!(f & F8086_Z))); 
     break;
 
     case 0x08: /* JS */
@@ -921,6 +990,18 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     cpu->ip_add = 3;
     cpu->cycles += 10;
   }
+  /* LEA MODR/M */
+  else if (opcode == 0x8D) {
+    uint8_t modrm = get8(cpu, cpu->ip_cs + 1);
+    uint16_t* reg = get_modrm_reg(cpu, modrm, 1);
+    
+    uint32_t addr = get_modrm_rm_addr(cpu, modrm);
+    if (addr == UINT32_MAX) {
+      addr = *(uint16_t*)get_modrm_rm_reg(cpu, modrm, 1);
+    }
+
+    *reg = addr;
+  }
   /* XCHG R16, AX */
   else if (opcode >= 0x91 && opcode <= 0x97) {
     uint8_t reg = opcode & 7; /* Wont be AX */
@@ -1105,6 +1186,72 @@ int cycle_cpu8086(cpu8086_t* cpu) {
       regseg_add(&cpu->regs[REG8086_SP], GET_SEG_SS(cpu), extra);
     }
     cpu->ip_add = 0; /* ADD BAD! */
+  }
+  /* Grp1 word */
+  else if (opcode == 0xF7) {
+    uint8_t modrm = get8(cpu, cpu->ip_cs + 1);
+    uint16_t* rm = get_modrm_rm(cpu, modrm, 1);
+    switch (modrm & MODRM_OP_MASK) {
+      case OP_G1_TEST:
+      /* TODO: I literally have no idea where this might come from. */
+      break;
+      
+      case OP_G1_NOT:
+      *rm = ~(*rm);
+      break;
+      case OP_G1_NEG:
+      *rm = -(*rm);
+      break;
+
+      case OP_G1_MUL:
+      {
+        uint32_t res = mul_ins(cpu, cpu->regs[REG8086_AX].x, *rm, 1);
+        cpu->regs[REG8086_AX].x = res;
+        cpu->regs[REG8086_DX].x = res >> 16;
+      }
+      break;
+
+      case OP_G1_IMUL:
+      {
+        int32_t res = imul_ins(cpu, cpu->regs[REG8086_AX].x, (int16_t)*rm, 1);
+        cpu->regs[REG8086_AX].x = res;
+        cpu->regs[REG8086_DX].x = res >> 16;
+      }
+      break;
+
+      case OP_G1_DIV:
+      {
+        uint32_t dxax;
+        div_result_t res;
+        if (*rm == 0) {
+          break;
+        }
+        dxax = cpu->regs[REG8086_AX].x | (((uint32_t)cpu->regs[REG8086_DX].x) << 16);
+        res = div_ins(cpu, dxax, *rm, 1);
+        cpu->regs[REG8086_AX].x = res.q;
+        cpu->regs[REG8086_DX].x = res.r;
+      }
+      break;
+
+      case OP_G1_IDIV:
+      {
+        int32_t dxax;
+        div_result_t res;
+        if (*rm == 0) {
+          break;
+        }
+        dxax = cpu->regs[REG8086_AX].x | (((uint32_t)cpu->regs[REG8086_DX].x) << 16);
+        res = idiv_ins(cpu, dxax, (int16_t)*rm, 1);
+        cpu->regs[REG8086_AX].x = res.q;
+        cpu->regs[REG8086_DX].x = res.r;
+      }
+      break;
+      
+      default:
+      break;
+    }
+
+    cpu->ip_add = 2;
   }
   /* UNKNOWN! or NOP */
   else {
