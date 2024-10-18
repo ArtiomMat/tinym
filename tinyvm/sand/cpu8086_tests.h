@@ -412,6 +412,61 @@ static void test_sreg_mov_and_modrmb(void) {
   );
 }
 
+static void test_xchg(void) {
+  cpu8086_t cpu;
+  mem_t mem;
+  /*
+    mov ax, 0x69
+    mov dx, ax
+    mov ax, 0
+    xchg es:[2], dx ; es:[2] holds 0x420
+    xchg dx, es:[2] ; dx back to 0x69
+    xchg ax, dx ; ax now 0x69, dx 0
+  */
+  uint8_t code[] = {
+    0xb8, 0x69, 0x00, 0x89, 0xc2, 0xb8, 0x00, 0x00, 0x26, 0x87, 0x16, 0x02,
+    0x00, 0x26, 0x87, 0x16, 0x02, 0x00, 0x92
+  };
+
+  HOPE_THAT(init_mem8086(&mem, 0), "Memory initialized.");
+  HOPE_THAT(reset_cpu8086(&cpu, &mem), "CPU initialized.");
+
+  /* Force custom config on some registers for testing purposes */
+  cpu.regs[REG8086_SS].x = 0xF000;
+  cpu.regs[REG8086_SP].x = 0xE000;
+  cpu.regs[REG8086_ES].x = 0xD000;
+  cpu.regs[REG8086_CS].x = 0xA000;
+  cpu.regs[REG8086_IP].x = 0x3;
+  cpu.regs[REG8086_SI].x = 0;
+
+  mem.bytes[0xD0002] = 0x20;
+  mem.bytes[0xD0003] = 0x4;
+
+  memcpy(mem.bytes + 0xA0003, code, sizeof (code));
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_DX].x == 0x420 && mem.bytes[0xD0002] == 0x69 && mem.bytes[0xD0003] == 0,
+    "xchg successful"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_DX].x == 0x69 && mem.bytes[0xD0002] == 0x20 && mem.bytes[0xD0003] == 0x4,
+    "xchg successful"
+  );
+
+  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
+  HOPE_THAT(
+    cpu.regs[REG8086_AX].x == 0x69 && cpu.regs[REG8086_DX].x == 0,
+    "xchg successful"
+  );
+}
+
 static void test_call_ret_near(void) {
   uint8_t i;
   cpu8086_t cpu;
@@ -695,6 +750,7 @@ void add_cpu8086_tests(void) {
   ADD_TEST(test_sreg_mov_and_modrmb);
   ADD_TEST(test_modrm_888b);
   ADD_TEST(test_mov_rm_imm);
+  ADD_TEST(test_xchg);
   ADD_TEST(test_call_ret_far);
   ADD_TEST(test_call_ret_near);
 }
