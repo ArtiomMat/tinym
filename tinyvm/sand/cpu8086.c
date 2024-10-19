@@ -11,6 +11,9 @@
 
 #include <string.h>
 
+#define ROL(X, N) ((X << N) | (X >> (sizeof (X) - N)))
+#define ROR(X, N) ((X >> N) | (X << (sizeof (X) - N)))
+
 #define REGSEG_SP_SS(CPU) regseg_imm(CPU, CPU->regs[REG8086_SP].x, CPU->regs[REG8086_SS].x)
 #define REGSEG_IP_CS(CPU) regseg_imm(CPU, CPU->regs[REG8086_IP].x, CPU->regs[REG8086_CS].x)
 #define REGSEG_IP_CS_ADD(CPU, N) regseg_add(&CPU->regs[REG8086_IP], &CPU->regs[REG8086_CS], N)
@@ -1191,11 +1194,8 @@ int cycle_cpu8086(cpu8086_t* cpu) {
   else if (opcode == 0xF7) {
     uint8_t modrm = get8(cpu, cpu->ip_cs + 1);
     uint16_t* rm = get_modrm_rm(cpu, modrm, 1);
-    switch (modrm & MODRM_OP_MASK) {
-      case OP_G1_TEST:
-      /* TODO: I literally have no idea where this might come from. */
-      break;
-      
+    uint8_t op = modrm & MODRM_OP_MASK;
+    switch (op) {
       case OP_G1_NOT:
       *rm = ~(*rm);
       break;
@@ -1204,22 +1204,22 @@ int cycle_cpu8086(cpu8086_t* cpu) {
       break;
 
       case OP_G1_MUL:
-      {
-        uint32_t res = mul_ins(cpu, cpu->regs[REG8086_AX].x, *rm, 1);
-        cpu->regs[REG8086_AX].x = res;
-        cpu->regs[REG8086_DX].x = res >> 16;
-      }
-      break;
-
       case OP_G1_IMUL:
       {
-        int32_t res = imul_ins(cpu, cpu->regs[REG8086_AX].x, (int16_t)*rm, 1);
+        uint32_t res;
+        if (op == OP_G1_MUL) {
+          res = mul_ins(cpu, cpu->regs[REG8086_AX].x, *rm, 1);
+        }
+        else {
+          res = imul_ins(cpu, (int32_t)cpu->regs[REG8086_AX].x, (int16_t)*rm, 1);
+        }
         cpu->regs[REG8086_AX].x = res;
         cpu->regs[REG8086_DX].x = res >> 16;
       }
       break;
 
       case OP_G1_DIV:
+      case OP_G1_IDIV:
       {
         uint32_t dxax;
         div_result_t res;
@@ -1227,23 +1227,65 @@ int cycle_cpu8086(cpu8086_t* cpu) {
           break;
         }
         dxax = cpu->regs[REG8086_AX].x | (((uint32_t)cpu->regs[REG8086_DX].x) << 16);
-        res = div_ins(cpu, dxax, *rm, 1);
+        if (op == OP_G1_DIV) {
+          res = div_ins(cpu, dxax, *rm, 1);
+        }
+        else {
+          res = idiv_ins(cpu, (int32_t)dxax, (int16_t)*rm, 1);
+        }
         cpu->regs[REG8086_AX].x = res.q;
         cpu->regs[REG8086_DX].x = res.r;
       }
       break;
+      
+      default:
+      break;
+    }
 
+    cpu->ip_add = 2;
+  }
+  /* Grp1 byte */
+  else if (opcode == 0xF6) {
+    uint8_t modrm = get8(cpu, cpu->ip_cs + 1);
+    uint8_t* rm = get_modrm_rm(cpu, modrm, 0);
+    uint8_t op = modrm & MODRM_OP_MASK;
+    switch (op) {
+      case OP_G1_NOT:
+      *rm = ~(*rm);
+      break;
+      case OP_G1_NEG:
+      *rm = -(*rm);
+      break;
+
+      case OP_G1_MUL:
+      case OP_G1_IMUL:
+      {
+        uint32_t res;
+        if (op == OP_G1_MUL) {
+          res = mul_ins(cpu, cpu->regs[REG8086_AX].p[0], *rm, 0);
+        }
+        else {
+          res = imul_ins(cpu, (int32_t)cpu->regs[REG8086_AX].p[0], (int16_t)*rm, 0);
+        }
+        cpu->regs[REG8086_AX].x = res;
+      }
+      break;
+
+      case OP_G1_DIV:
       case OP_G1_IDIV:
       {
-        int32_t dxax;
         div_result_t res;
         if (*rm == 0) {
           break;
         }
-        dxax = cpu->regs[REG8086_AX].x | (((uint32_t)cpu->regs[REG8086_DX].x) << 16);
-        res = idiv_ins(cpu, dxax, (int16_t)*rm, 1);
-        cpu->regs[REG8086_AX].x = res.q;
-        cpu->regs[REG8086_DX].x = res.r;
+        if (op == OP_G1_DIV) {
+          res = div_ins(cpu, cpu->regs[REG8086_AX].x, *rm, 0);
+        }
+        else {
+          res = idiv_ins(cpu, (int32_t)cpu->regs[REG8086_AX].x, (int16_t)*rm, 0);
+        }
+        cpu->regs[REG8086_AX].p[0] = res.q;
+        cpu->regs[REG8086_AX].p[1] = res.r;
       }
       break;
       

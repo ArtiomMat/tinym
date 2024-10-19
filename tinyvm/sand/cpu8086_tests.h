@@ -420,25 +420,20 @@ static void test_grp1(void) {
 
     mul ax ; Square AX, result should be 9
 
-    mov ax, 2
-    mov dx, ax
-    mov ax, 9
+    mov dx, 2
 
     div dx ; AX should be 4
 
-    mov ax, -3
-    mov cx, ax
-    mov ax, 4
+    mov cx, -3
 
     imul cx ; AX should be -12
     idiv cx ; AX should be 4
     neg ax ; AX should be -4
-    not ax ; AX should be 0xFFFC
+    not ax ; AX should be 0x3
   */
   uint8_t code[] = {
-  0xb8, 0x03, 0x00, 0xf7, 0xe0, 0xb8, 0x02, 0x00, 0x89, 0xc2, 0xb8, 0x09,
-  0x00, 0xf7, 0xf2, 0xb8, 0xfd, 0xff, 0x89, 0xc1, 0xb8, 0x04, 0x00, 0xf7,
-  0xe9, 0xf7, 0xf9, 0xf7, 0xd8, 0xf7, 0xd0
+  0xb8, 0x03, 0x00, 0xf7, 0xe0, 0xba, 0x02, 0x00, 0xf7, 0xf2, 0xb9, 0xfd,
+  0xff, 0xf7, 0xe9, 0xf7, 0xf9, 0xf7, 0xd8, 0xf7, 0xd0
   };
 
   HOPE_THAT(init_mem8086(&mem, 0), "Memory initialized.");
@@ -461,15 +456,11 @@ static void test_grp1(void) {
 
   HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
   HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
-  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
-  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
   HOPE_THAT(
     cpu.regs[REG8086_AX].x == 4,
     "division successful"
   );
   
-  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
-  HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
   HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
   HOPE_THAT(!cycle_cpu8086(&cpu), "No error.");
   HOPE_THAT(
