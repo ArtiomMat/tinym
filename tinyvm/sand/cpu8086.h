@@ -19,13 +19,13 @@ enum {
   REG8086_CX,
   REG8086_DX,
   REG8086_BX,
-  
+
   REG8086_SP,
   REG8086_BP,
 
   REG8086_SI,
   REG8086_DI,
-  
+
   REG8086_SEGMENTS, /* The index of ES, compatible with SEG_* */
   REG8086_ES = REG8086_SEGMENTS,
   REG8086_CS,
@@ -71,8 +71,8 @@ typedef struct {
   mem_t* mem; /* Pointer to the used mem */
   uint64_t cycles; /* How many cycles passed. */
   reg8086_t regs[16];
-  int16_t i; /* Interrupt that was called. */
-  
+  int16_t i; /* Interrupt that was called. 256 means nothing. */
+
   /* cycle_cpu8086() stuff for helper functions to have easy access. Reset and recalculated each cycle. */
   uint32_t ip_cs; /* Address of current instruction. Reset to REGSEG_IP_CS(CPU). */
   uint8_t e; /* Error code. Reset to E8086_OK. */
@@ -80,19 +80,28 @@ typedef struct {
   uint8_t seg; /* If REG8086_NULL use default sreg, else this is the sreg prefixed. Reset to REG8086_NULL. */
 } cpu8086_t;
 
-/*
-  Returns 0 if MEM is invalid.
-  You should use init_mem8086() for MEM, manual also ok but must adhere to standard 8086 mapping.
-*/
+/**
+ * @brief Resets registers and internal memory.
+ * @param cpu
+ * @param mem Must be a valid memory object for 8086, suggested to use `init_mem8086()`.
+ * @return 1 if successful reset, 0 if `mem` is invalid or another issue occured.
+ */
 int reset_cpu8086(cpu8086_t* cpu, mem_t* mem);
+/**
+ * @brief Since the 8086 promises instruction automicity, this does not make the CPU immidietly jump, rather the next time `cycle_cpu8086()` is called, this takes effect.
+ * @param cpu
+ * @param i Interrupt index.
+ * @note This function does not add cycles, `cycle_cpu8086()` will not add cycles for jumping to the interrupt address either, this function is transparent.
+ */
 void interrupt_cpu8086(cpu8086_t* cpu, uint8_t i);
-/*
-  The function is not necessarily 1 cycle, it simply running the current instruction.
-  Returns whether or not an error occured, in which case the vm SHOULD handle it via CPU->e.
-  Errors are irrecoverable, the internal logic tries to always recover from any weird stuff, but
-  in some cases the error is so bad that it causes an incomplete operation, or the intended result
-  will not happen.
-*/
+/**
+ * @brief The function is not necessarily 1 cycle, it simply running the current instruction.
+ * @param cpu
+ * @return 1 if an error occured, 0 otherwise, in which case the vm SHOULD handle it via `cpu->e`.
+ * Errors are irrecoverable, the internal logic tries to always recover from any weird stuff, but
+ * in some cases the error is so bad that it causes an incomplete operation, or the intended result
+ * will not happen.
+ */
 int cycle_cpu8086(cpu8086_t* cpu);
 
 void add_cpu8086_tests(void);
