@@ -21,6 +21,10 @@ int init_os(void) {
     return 1;
   }
 
+  if (args[0][0] != '.') {
+    fputs("init_os(): tinyvm is in $PATH probably, don't support that yet. Use ./ syntax.\n", stderr);
+    return 0;
+  }
   /*
     Determining exe_path, not full implementation because the program might be 
     in $PATH and have no relative path to cwd.
@@ -33,15 +37,16 @@ int init_os(void) {
     fputs("init_os(): args and args_n not initialized.\n", stderr);
     return 0;
   }
-  if (args[0][0] != '.') {
-    fputs("init_os(): tinyvm is in $PATH probably, don't support that yet. Use ./ syntax.\n", stderr);
-    return 0;
+  /* Put last slash */
+  for (last_slash = 0; exe_path[last_slash]; ++last_slash)
+  {}
+  if (last_slash < sizeof (exe_path) - 1) {
+    exe_path[last_slash] = '/';
+    exe_path[last_slash + 1] = 0;
   }
-  /* Find last slash */
-  for (i = 0; exe_path[i]; ++i) {
-    if (exe_path[i] == '/') {
-      last_slash = i;
-    }
+  else {
+    fputs("init_os(): address too long sorry!\n", stderr);
+    return 0;
   }
   /* Copy args[0] to add where the exe is in that cwd */
   for (i = last_slash + 1, j = 0; i < sizeof (exe_path) && args[0][j]; ++i, ++j) {
@@ -99,7 +104,6 @@ FILE* fopen_rel(const char* fp, const char* m) {
     exe_path[i] = fp[j];
   }
   exe_path[i] = 0;
-  puts(exe_path);
   return fopen(exe_path, m);
 }
 

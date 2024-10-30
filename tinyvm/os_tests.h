@@ -17,21 +17,34 @@ static void test_balloc(void) {
 
 static void test_fopen_rel(void) {
   FILE* f;
-  if (args_n) {
-    HOPE_THAT(
-      init_os(), 
-      "os initialized"
-    );
-    f = fopen_rel(args[0], "rb");
+  const char* exe_arg = args[0];
+  unsigned i, last_slash;
 
-    HOPE_THAT(
-      f != NULL,
-      "Opening this binary worked."
-    );
-
-    fclose(f);
-    free_os();
+  HOPE_THAT(
+    args_n, 
+    "there are arguments in the global vars args and args_n"
+  );
+  
+  HOPE_THAT(
+    init_os(), 
+    "os initialized"
+  );
+  
+  for (i = 0; exe_arg[i]; ++i) {
+    if (exe_arg[i] == '/' || exe_arg[i] == '\\') {
+      last_slash = i;
+    }
   }
+
+  f = fopen_rel(exe_arg + last_slash + 1, "rb");
+
+  HOPE_THAT(
+    f != NULL,
+    "Opening this binary worked."
+  );
+
+  fclose(f);
+  free_os();
 }
 
 void add_os_tests(void) {
