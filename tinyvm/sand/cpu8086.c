@@ -67,19 +67,15 @@ static reg8086_t* get_seg(cpu8086_t* cpu, const int defs) {
 }
 
 /**
- * @brief Joins `reg:seg` into an address.
+ * @brief Joins `seg:reg` into an address. Wraps around if address becomes too large.
  * @param cpu
  * @param reg
  * @param seg
- * @return `seg::reg`.
- * @warning Errors: `E8086_ACCESS_VIOLATION`.
+ * @return `seg:reg`.
  */
 static uint32_t regseg_imm(cpu8086_t* cpu, const uint16_t reg, const uint16_t seg) {
   uint32_t ret = reg + (seg << 4);
-  if (0xFFF00000 & ret) {
-    cpu->e = E8086_ACCESS_VIOLATION;
-    return ret & 0xFFFFF; /* Still want to return something to let CPU finish */
-  }
+  ret &= 0xFFFFF;
   return ret;
 }
 
@@ -93,8 +89,8 @@ static uint32_t regseg(cpu8086_t* cpu, const int reg, const int seg) {
 }
 
 /**
- * @brief Adds `addr` to `*seg`:`*reg` combined to avoid overflow of adding to `*reg` alone.
  * @attention `*seg` is allowed to exceed 0xF000 for perfomance reasons. Always use safe indexing functions.
+ * @brief Adds `addr` to `*seg`:`*reg` combined to avoid overflow of adding to `*reg` alone.
  * @param reg
  * @param seg
  * @param addr At most a 16 bit address offseg can be used.
@@ -110,8 +106,8 @@ static void regseg_add(reg8086_t* reg, reg8086_t* seg, const uint16_t addr) {
 }
 
 /**
- * @brief Subtracts `addr` from `*seg`:`*reg` combined to avoid overflow of subtrating from `*reg` alone.
  * @attention `*seg` is allowed to exceed 0xF000 for perfomance reasons. Always use safe indexing functions.
+ * @brief Subtracts `addr` from `*seg`:`*reg` combined to avoid overflow of subtrating from `*reg` alone.
  * @param reg
  * @param seg
  * @param addr At most a 16 bit address offseg can be used.
@@ -521,15 +517,15 @@ static int far_jump(cpu8086_t* cpu, uint16_t ip, uint16_t cs) {
  * @param cs
  * @warning Errors: `E8086_ACCESS_VIOLATION`.
  */
-static void push_ip_cs_off(cpu8086_t* cpu, uint8_t off) {
+static void push_cs_ip_off(cpu8086_t* cpu, uint8_t off) {
   /* These are what is pushed */
   reg8086_t ip2, cs2;
-  ip2 = cpu->regs[REG8086_IP];
   cs2 = cpu->regs[REG8086_CS];
+  ip2 = cpu->regs[REG8086_IP];
   regseg_add(&ip2, &cs2, off);
 
-  push16(cpu, ip2.x);
   push16(cpu, cs2.x);
+  push16(cpu, ip2.x);
 }
 
 /**
@@ -641,8 +637,8 @@ static void* get_modrm_rm_reg(cpu8086_t* cpu, uint8_t modrm, uint8_t w_bit) {
 }
 
 /**
- * @brief Analyzes MODRM(the modr/m byte) and returns a full 32 but address if R/M part represents an address.
  * @attention Can return unsafe address(out of bounds), always use safe safe indexing functions.
+ * @brief Analyzes MODRM(the modr/m byte) and returns a full 32 but address if R/M part represents an address.
  * @param cpu
  * @param modrm the modr/m byte.
  * @return `UINT32_MAX` if it's not an address(MOD=3, RM is not an address it's a register),
@@ -859,13 +855,14 @@ uint8_t skip_prefix(cpu8086_t* cpu) {
 int cycle_cpu8086(cpu8086_t* cpu) {
   uint8_t opcode;
 
-  /* Interrupt? */
+  /* Interrupted jump before proceeding and reset cpu->i */
   if (cpu->i != 256) {
     uint32_t i_addr = cpu->i * 4;
     cpu->i = 256;
 
-    push16(cpu, cpu->regs[REG8086_IP].x);
+    push16(cpu, cpu->regs[REG8086_F].x);
     push16(cpu, cpu->regs[REG8086_CS].x);
+    push16(cpu, cpu->regs[REG8086_IP].x);
 
     far_jump(cpu, get16(cpu, i_addr), get16(cpu, i_addr + 2));
   }
@@ -954,7 +951,7 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     cpu->cycles += 8;
     cpu->ip_add = 1;
   }
-  /* POP MODR/M in 16 bit mode */
+  /* POP MODR/M with W */
   else if (opcode == 0x8F) {
     uint8_t modrm = get8(cpu, cpu->ip_cs + 1);
     uint16_t* rm = get_modrm_rm(cpu, modrm, 1);
@@ -1193,7 +1190,7 @@ int cycle_cpu8086(cpu8086_t* cpu) {
 
     /* Was it a call? */
     if (opcode == 0x9A) {
-      push_ip_cs_off(cpu, 5);
+      push_cs_ip_off(cpu, 5);
     }
     /* 4 if didn't jump since we don't want to be stuck in a loop */
     cpu->ip_add = far_jump(cpu, ip, cs) ? 0 : 4;
@@ -1210,13 +1207,35 @@ int cycle_cpu8086(cpu8086_t* cpu) {
   }
   /* RET FAR IMM16 or RET FAR */
   else if (opcode == 0xCA || opcode == 0xCB) {
-    cpu->regs[REG8086_CS].x = pop16(cpu);
     cpu->regs[REG8086_IP].x = pop16(cpu);
+    cpu->regs[REG8086_CS].x = pop16(cpu);
     /* Extra popping */
     if (opcode == 0xCB) {
       uint16_t extra = get16(cpu, cpu->ip_cs + 1);
       regseg_add(&cpu->regs[REG8086_SP], GET_SEG_SS(cpu), extra);
     }
+    cpu->ip_add = 0; /* ADD BAD! */
+  }
+  /* INT 3 */
+  else if (opcode == 0xCC) {
+    interrupt_cpu8086(cpu, 3);
+    cpu->ip_add = 1; /* Add for IRET to return after this INT */
+  }
+  /* INT IMM8 */
+  else if (opcode == 0xCD) {
+    interrupt_cpu8086(cpu, get8(cpu, cpu->ip_cs + 1));
+    cpu->ip_add = 2; /* Add for IRET to return after this INT */
+  }
+  /* INTO */
+  else if (opcode == 0xCE && (cpu->regs[REG8086_F].x & F8086_O)) {
+    interrupt_cpu8086(cpu, 4);
+    cpu->ip_add = 1; /* Add for IRET to return after this INT */
+  }
+  /* IRET */
+  else if (opcode == 0xCF) {
+    cpu->regs[REG8086_IP].x = pop16(cpu);
+    cpu->regs[REG8086_CS].x = pop16(cpu);
+    cpu->regs[REG8086_F].x = pop16(cpu);
     cpu->ip_add = 0; /* ADD BAD! */
   }
   /* Grp1 word */
@@ -1328,7 +1347,7 @@ int cycle_cpu8086(cpu8086_t* cpu) {
   /* UNKNOWN! or NOP */
   else {
     if (opcode == 0x66 || opcode == 0x67) {
-      fputs("cycle_cpu8086(): you'll need i386 for that.", stderr);
+      fputs("cycle_cpu8086(): you'll need i386 for that.\n", stderr);
     }
     cpu->cycles += 1;
   }

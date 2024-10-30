@@ -26,15 +26,15 @@ int init_os(void) {
     in $PATH and have no relative path to cwd.
   */
   if (getcwd(exe_path, sizeof (exe_path)) == NULL) {
-    fputs("init_os(): getcwd() failed.", stderr);
+    fputs("init_os(): getcwd() failed.\n", stderr);
     return 0;
   }
   if (!args_n) {
-    fputs("init_os(): args and args_n not initialized.", stderr);
+    fputs("init_os(): args and args_n not initialized.\n", stderr);
     return 0;
   }
   if (args[0][0] != '.') {
-    fputs("init_os(): tinyvm is in $PATH probably, don't support that yet.", stderr);
+    fputs("init_os(): tinyvm is in $PATH probably, don't support that yet. Use ./ syntax.\n", stderr);
     return 0;
   }
   /* Find last slash */
@@ -99,6 +99,7 @@ FILE* fopen_rel(const char* fp, const char* m) {
     exe_path[i] = fp[j];
   }
   exe_path[i] = 0;
+  puts(exe_path);
   return fopen(exe_path, m);
 }
 
