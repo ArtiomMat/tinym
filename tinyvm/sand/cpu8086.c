@@ -1238,6 +1238,72 @@ int cycle_cpu8086(cpu8086_t* cpu) {
     cpu->regs[REG8086_F].x = pop16(cpu);
     cpu->ip_add = 0; /* ADD BAD! */
   }
+  /* IMM byte */
+  else if (opcode == 0x80) {
+    uint8_t modrm = get8(cpu, cpu->ip_cs + 1);
+    uint8_t* rm = get_modrm_rm(cpu, modrm, 0);
+    uint8_t op = modrm & MODRM_OP_MASK;
+    uint8_t imm = get8(cpu, cpu->ip_cs + 2);
+    switch (op) {
+      
+    }
+    cpu->ip_add = 3;
+  }
+  /* IMM word */
+  else if (opcode == 0x81) {
+
+  }
+  /* Grp1 byte */
+  else if (opcode == 0xF6) {
+    uint8_t modrm = get8(cpu, cpu->ip_cs + 1);
+    uint8_t* rm = get_modrm_rm(cpu, modrm, 0);
+    uint8_t op = modrm & MODRM_OP_MASK;
+    switch (op) {
+      case OP_G1_NOT:
+      *rm = ~(*rm);
+      break;
+      case OP_G1_NEG:
+      *rm = -(*rm);
+      break;
+
+      case OP_G1_MUL:
+      case OP_G1_IMUL:
+      {
+        uint32_t res;
+        if (op == OP_G1_MUL) {
+          res = mul_ins(cpu, cpu->regs[REG8086_AX].p[0], *rm, 0);
+        }
+        else {
+          res = imul_ins(cpu, (int32_t)cpu->regs[REG8086_AX].p[0], (int16_t)*rm, 0);
+        }
+        cpu->regs[REG8086_AX].x = res;
+      }
+      break;
+
+      case OP_G1_DIV:
+      case OP_G1_IDIV:
+      {
+        div_result_t res;
+        if (*rm == 0) {
+          break;
+        }
+        if (op == OP_G1_DIV) {
+          res = div_ins(cpu, cpu->regs[REG8086_AX].x, *rm, 0);
+        }
+        else {
+          res = idiv_ins(cpu, (int32_t)cpu->regs[REG8086_AX].x, (int16_t)*rm, 0);
+        }
+        cpu->regs[REG8086_AX].p[0] = res.q;
+        cpu->regs[REG8086_AX].p[1] = res.r;
+      }
+      break;
+
+      default:
+      break;
+    }
+
+    cpu->ip_add = 2;
+  }
   /* Grp1 word */
   else if (opcode == 0xF7) {
     uint8_t modrm = get8(cpu, cpu->ip_cs + 1);
@@ -1284,57 +1350,6 @@ int cycle_cpu8086(cpu8086_t* cpu) {
         }
         cpu->regs[REG8086_AX].x = res.q;
         cpu->regs[REG8086_DX].x = res.r;
-      }
-      break;
-
-      default:
-      break;
-    }
-
-    cpu->ip_add = 2;
-  }
-  /* Grp1 byte */
-  else if (opcode == 0xF6) {
-    uint8_t modrm = get8(cpu, cpu->ip_cs + 1);
-    uint8_t* rm = get_modrm_rm(cpu, modrm, 0);
-    uint8_t op = modrm & MODRM_OP_MASK;
-    switch (op) {
-      case OP_G1_NOT:
-      *rm = ~(*rm);
-      break;
-      case OP_G1_NEG:
-      *rm = -(*rm);
-      break;
-
-      case OP_G1_MUL:
-      case OP_G1_IMUL:
-      {
-        uint32_t res;
-        if (op == OP_G1_MUL) {
-          res = mul_ins(cpu, cpu->regs[REG8086_AX].p[0], *rm, 0);
-        }
-        else {
-          res = imul_ins(cpu, (int32_t)cpu->regs[REG8086_AX].p[0], (int16_t)*rm, 0);
-        }
-        cpu->regs[REG8086_AX].x = res;
-      }
-      break;
-
-      case OP_G1_DIV:
-      case OP_G1_IDIV:
-      {
-        div_result_t res;
-        if (*rm == 0) {
-          break;
-        }
-        if (op == OP_G1_DIV) {
-          res = div_ins(cpu, cpu->regs[REG8086_AX].x, *rm, 0);
-        }
-        else {
-          res = idiv_ins(cpu, (int32_t)cpu->regs[REG8086_AX].x, (int16_t)*rm, 0);
-        }
-        cpu->regs[REG8086_AX].p[0] = res.q;
-        cpu->regs[REG8086_AX].p[1] = res.r;
       }
       break;
 

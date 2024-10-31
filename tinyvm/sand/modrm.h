@@ -82,6 +82,17 @@ enum {
   OP_G1_DIV = 6 << 3,
   OP_G1_IDIV = 7 << 3
 };
+/* IMM OP part */
+enum {
+  OP_IMM_ADD = 0 << 3,
+  OP_IMM_OR = 1 << 3,
+  OP_IMM_ADC = 2 << 3,
+  OP_IMM_SBB = 3 << 3,
+  OP_IMM_AND = 4 << 3,
+  OP_IMM_SUB = 5 << 3,
+  OP_IMM_XOR = 6 << 3,
+  OP_IMM_CMP = 7 << 3
+};
 /* Grp2B OP part */
 enum {
   OP_G2B_INC = 0 << 3,
