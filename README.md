@@ -1,5 +1,6 @@
 # Tiny VM
 Maizuz wants a VM to run viruses on. Time to emulate 8086.
+Note that this is an emulator, rather than a VM.
 Written entirely in ANSI C, 0 dependency, -pedantic.
 
 # Virtualization progress
